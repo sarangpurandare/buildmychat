@@ -81,6 +81,8 @@ func main() {
 	log.Println("InterfaceService initialized.")
 	chatbotService := services.NewChatbotService(pgStore)
 	log.Println("ChatbotService initialized.")
+	chatService := services.NewChatService(pgStore, chatbotService)
+	log.Println("ChatService initialized.")
 	// ... Initialize other services here as they are created ...
 
 	// --- Initialize Handlers ---
@@ -94,6 +96,8 @@ func main() {
 	log.Println("InterfaceHandler initialized.")
 	chatbotHandler := handlers.NewChatbotHandlers(chatbotService)
 	log.Println("ChatbotHandler initialized.")
+	chatHandler := handlers.NewChatHandlers(chatService)
+	log.Println("ChatHandler initialized.")
 	// ... Initialize other handlers here ...
 
 	// 4. Setup Router & Inject Dependencies
@@ -103,6 +107,7 @@ func main() {
 		KBHandler:          kbHandler,        // Add KB handler
 		InterfaceHandler:   interfaceHandler, // Add Interface handler
 		ChatbotHandler:     chatbotHandler,   // Add Chatbot handler
+		ChatHandler:        chatHandler,      // Add Chat handler
 		Config:             cfg,
 	}
 	router := api.NewRouter(routerDeps) // Use the NewRouter function from internal/api

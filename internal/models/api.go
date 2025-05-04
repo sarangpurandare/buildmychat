@@ -191,3 +191,64 @@ type ChatbotMappingsResponse struct {
 	KnowledgeBases []KnowledgeBaseResponse `json:"knowledge_bases,omitempty"`
 	Interfaces     []InterfaceResponse     `json:"interfaces,omitempty"`
 }
+
+// --- Chat DTOs ---
+
+// ChatMessage represents a single message in a conversation.
+type ChatMessage struct {
+	Role      string           `json:"role"`               // "user", "assistant", "system"
+	Content   string           `json:"content"`            // The message text
+	Timestamp int64            `json:"timestamp"`          // Unix timestamp (seconds since epoch)
+	SentBy    string           `json:"sent_by"`            // "user", "assistant", "system" (duplicates Role for compatibility)
+	Hide      int              `json:"hide"`               // 0 = show, 1 = hide
+	Metadata  *json.RawMessage `json:"metadata,omitempty"` // Optional additional data
+}
+
+// CreateChatRequest defines the payload for creating a new chat.
+type CreateChatRequest struct {
+	ChatbotID      uuid.UUID  `json:"chatbot_id"`
+	InterfaceID    *uuid.UUID `json:"interface_id,omitempty"`     // Optional, for API-created chats
+	ExternalChatID *string    `json:"external_chat_id,omitempty"` // Optional, auto-generated if not provided
+	InitialMessage *string    `json:"initial_message,omitempty"`  // Optional first user message
+}
+
+// ChatResponse defines the standard representation of a chat in API responses.
+type ChatResponse struct {
+	ID             uuid.UUID        `json:"id"`
+	ChatbotID      uuid.UUID        `json:"chatbot_id"`
+	OrganizationID uuid.UUID        `json:"organization_id"`
+	InterfaceID    uuid.UUID        `json:"interface_id"`
+	ExternalChatID string           `json:"external_chat_id"`
+	Chat           []ChatMessage    `json:"chat"` // Changed from Messages to Chat, as required
+	Feedback       *int8            `json:"feedback,omitempty"`
+	Status         string           `json:"status"`
+	Chatbot        *ChatbotResponse `json:"chatbot,omitempty"` // For detail views, include related chatbot
+	CreatedAt      time.Time        `json:"created_at"`
+	UpdatedAt      time.Time        `json:"updated_at"`
+}
+
+// ListChatsResponse defines the response structure for listing chats.
+type ListChatsResponse struct {
+	Chats []ChatResponse `json:"chats"`
+}
+
+// AddMessageRequest defines the payload for adding a message to a chat.
+type AddMessageRequest struct {
+	Message string `json:"message"` // The user message to add
+}
+
+// UpdateChatFeedbackRequest defines the payload for updating chat feedback.
+type UpdateChatFeedbackRequest struct {
+	Feedback int8 `json:"feedback"` // -1 (negative), 0 (neutral), 1 (positive)
+}
+
+// AddMessageAsUserRequest defines the payload for adding a user message to a chat.
+type AddMessageAsUserRequest struct {
+	Message string `json:"message"` // The user message to add
+}
+
+// AddMessageAsAssistantRequest defines the payload for adding an assistant message to a chat.
+type AddMessageAsAssistantRequest struct {
+	Message  string           `json:"message"`            // The assistant message content
+	Metadata *json.RawMessage `json:"metadata,omitempty"` // Optional metadata for the message
+}

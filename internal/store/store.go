@@ -118,6 +118,16 @@ type Store interface {
 	AddInterfaceMapping(ctx context.Context, chatbotID, interfaceID, orgID uuid.UUID) error
 	RemoveInterfaceMapping(ctx context.Context, chatbotID, interfaceID, orgID uuid.UUID) error
 	GetChatbotMappings(ctx context.Context, chatbotID, orgID uuid.UUID) (*models.ChatbotMappingsResponse, error)
+
+	// Chat operations
+	CreateChat(ctx context.Context, arg CreateChatParams) (*models.Chat, error)
+	GetChatByID(ctx context.Context, id uuid.UUID, orgID uuid.UUID) (*models.Chat, error)
+	GetChatByExternalID(ctx context.Context, externalID string, interfaceID uuid.UUID, orgID uuid.UUID) (*models.Chat, error)
+	ListChatsByOrg(ctx context.Context, orgID uuid.UUID, limit, offset int) ([]models.Chat, error)
+	ListChatsByChatbot(ctx context.Context, chatbotID, orgID uuid.UUID, limit, offset int) ([]models.Chat, error)
+	AddMessageToChat(ctx context.Context, chatID uuid.UUID, message models.ChatMessage, orgID uuid.UUID) error
+	UpdateChatStatus(ctx context.Context, chatID uuid.UUID, status string, orgID uuid.UUID) error
+	UpdateChatFeedback(ctx context.Context, chatID uuid.UUID, feedback int8, orgID uuid.UUID) error
 }
 
 // Implementations below were moved to internal/store/postgres/store.go
@@ -141,4 +151,14 @@ type UpdateChatbotParams struct {
 	SystemPrompt   *string
 	LLMModel       *string
 	Configuration  *json.RawMessage
+}
+
+// CreateChatParams contains parameters for creating a new chat.
+type CreateChatParams struct {
+	ID             uuid.UUID // Optional, if nil a new UUID will be generated
+	OrganizationID uuid.UUID
+	ChatbotID      uuid.UUID
+	InterfaceID    uuid.UUID
+	ExternalChatID string // Can be auto-generated if empty
+	ChatData       []byte // JSON-marshaled chat messages
 }

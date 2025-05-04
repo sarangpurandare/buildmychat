@@ -5,6 +5,7 @@ import (
 	db_models "buildmychat-backend/internal/models"
 	"buildmychat-backend/internal/store"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log"
@@ -571,4 +572,339 @@ func (s *PostgresStore) GetChatbotMappings(ctx context.Context, chatbotID, orgID
 	}
 
 	return result, nil
+}
+
+// --- Chat Methods ---
+
+const createChat = `-- name: CreateChat :one
+INSERT INTO chats (
+    id, organization_id, chatbot_id, interface_id, external_chat_id, chat_data, status
+) VALUES (
+    $1, $2, $3, $4, $5, $6, $7
+)
+RETURNING id, chatbot_id, organization_id, interface_id, external_chat_id, chat_data, feedback, status, created_at, updated_at;
+`
+
+func (s *PostgresStore) CreateChat(ctx context.Context, arg store.CreateChatParams) (*models.Chat, error) {
+	// Generate UUID if not provided
+	id := arg.ID
+	if id == uuid.Nil {
+		id = uuid.New()
+	}
+
+	// Generate external chat ID if not provided
+	externalChatID := arg.ExternalChatID
+	if externalChatID == "" {
+		externalChatID = uuid.New().String()
+	}
+
+	// Verify the chatbot exists and belongs to the organization
+	_, err := s.GetChatbotByID(ctx, arg.ChatbotID, arg.OrganizationID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to verify chatbot: %w", err)
+	}
+
+	// Verify the interface exists and belongs to the organization
+	_, err = s.GetInterfaceByID(ctx, arg.InterfaceID, arg.OrganizationID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to verify interface: %w", err)
+	}
+
+	// Use the provided chat data
+	var chatData []byte
+	if arg.ChatData != nil {
+		chatData = arg.ChatData
+	} else {
+		// Default to empty array if no chat data provided
+		chatData = []byte("[]")
+	}
+
+	// Default status is ACTIVE
+	status := "ACTIVE"
+
+	row := s.db.QueryRow(ctx, createChat,
+		id,
+		arg.OrganizationID,
+		arg.ChatbotID,
+		arg.InterfaceID,
+		externalChatID,
+		chatData,
+		status,
+	)
+
+	var chat models.Chat
+	err = row.Scan(
+		&chat.ID,
+		&chat.ChatbotID,
+		&chat.OrganizationID,
+		&chat.InterfaceID,
+		&chat.ExternalChatID,
+		&chat.ChatData,
+		&chat.Feedback,
+		&chat.Status,
+		&chat.CreatedAt,
+		&chat.UpdatedAt,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("error scanning chat: %w", err)
+	}
+
+	return &chat, nil
+}
+
+const getChatByID = `-- name: GetChatByID :one
+SELECT id, chatbot_id, organization_id, interface_id, external_chat_id, chat_data, feedback, status, created_at, updated_at
+FROM chats
+WHERE id = $1 AND organization_id = $2;
+`
+
+func (s *PostgresStore) GetChatByID(ctx context.Context, id uuid.UUID, orgID uuid.UUID) (*models.Chat, error) {
+	row := s.db.QueryRow(ctx, getChatByID, id, orgID)
+
+	var chat models.Chat
+	err := row.Scan(
+		&chat.ID,
+		&chat.ChatbotID,
+		&chat.OrganizationID,
+		&chat.InterfaceID,
+		&chat.ExternalChatID,
+		&chat.ChatData,
+		&chat.Feedback,
+		&chat.Status,
+		&chat.CreatedAt,
+		&chat.UpdatedAt,
+	)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, store.ErrNotFound
+		}
+		return nil, fmt.Errorf("error scanning chat: %w", err)
+	}
+
+	return &chat, nil
+}
+
+const getChatByExternalID = `-- name: GetChatByExternalID :one
+SELECT id, chatbot_id, organization_id, interface_id, external_chat_id, chat_data, feedback, status, created_at, updated_at
+FROM chats
+WHERE external_chat_id = $1 AND interface_id = $2 AND organization_id = $3;
+`
+
+func (s *PostgresStore) GetChatByExternalID(ctx context.Context, externalID string, interfaceID uuid.UUID, orgID uuid.UUID) (*models.Chat, error) {
+	row := s.db.QueryRow(ctx, getChatByExternalID, externalID, interfaceID, orgID)
+
+	var chat models.Chat
+	err := row.Scan(
+		&chat.ID,
+		&chat.ChatbotID,
+		&chat.OrganizationID,
+		&chat.InterfaceID,
+		&chat.ExternalChatID,
+		&chat.ChatData,
+		&chat.Feedback,
+		&chat.Status,
+		&chat.CreatedAt,
+		&chat.UpdatedAt,
+	)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, store.ErrNotFound
+		}
+		return nil, fmt.Errorf("error scanning chat: %w", err)
+	}
+
+	return &chat, nil
+}
+
+const listChatsByOrg = `-- name: ListChatsByOrg :many
+SELECT id, chatbot_id, organization_id, interface_id, external_chat_id, chat_data, feedback, status, created_at, updated_at
+FROM chats
+WHERE organization_id = $1
+ORDER BY created_at DESC
+LIMIT $2 OFFSET $3;
+`
+
+func (s *PostgresStore) ListChatsByOrg(ctx context.Context, orgID uuid.UUID, limit, offset int) ([]models.Chat, error) {
+	rows, err := s.db.Query(ctx, listChatsByOrg, orgID, limit, offset)
+	if err != nil {
+		return nil, fmt.Errorf("error querying chats: %w", err)
+	}
+	defer rows.Close()
+
+	var chats []models.Chat
+	for rows.Next() {
+		var chat models.Chat
+		if err := rows.Scan(
+			&chat.ID,
+			&chat.ChatbotID,
+			&chat.OrganizationID,
+			&chat.InterfaceID,
+			&chat.ExternalChatID,
+			&chat.ChatData,
+			&chat.Feedback,
+			&chat.Status,
+			&chat.CreatedAt,
+			&chat.UpdatedAt,
+		); err != nil {
+			return nil, fmt.Errorf("error scanning chat row: %w", err)
+		}
+		chats = append(chats, chat)
+	}
+
+	if err = rows.Err(); err != nil {
+		return nil, fmt.Errorf("error iterating chat rows: %w", err)
+	}
+
+	return chats, nil
+}
+
+const listChatsByChatbot = `-- name: ListChatsByChatbot :many
+SELECT id, chatbot_id, organization_id, interface_id, external_chat_id, chat_data, feedback, status, created_at, updated_at
+FROM chats
+WHERE chatbot_id = $1 AND organization_id = $2
+ORDER BY created_at DESC
+LIMIT $3 OFFSET $4;
+`
+
+func (s *PostgresStore) ListChatsByChatbot(ctx context.Context, chatbotID, orgID uuid.UUID, limit, offset int) ([]models.Chat, error) {
+	rows, err := s.db.Query(ctx, listChatsByChatbot, chatbotID, orgID, limit, offset)
+	if err != nil {
+		return nil, fmt.Errorf("error querying chats: %w", err)
+	}
+	defer rows.Close()
+
+	var chats []models.Chat
+	for rows.Next() {
+		var chat models.Chat
+		if err := rows.Scan(
+			&chat.ID,
+			&chat.ChatbotID,
+			&chat.OrganizationID,
+			&chat.InterfaceID,
+			&chat.ExternalChatID,
+			&chat.ChatData,
+			&chat.Feedback,
+			&chat.Status,
+			&chat.CreatedAt,
+			&chat.UpdatedAt,
+		); err != nil {
+			return nil, fmt.Errorf("error scanning chat row: %w", err)
+		}
+		chats = append(chats, chat)
+	}
+
+	if err = rows.Err(); err != nil {
+		return nil, fmt.Errorf("error iterating chat rows: %w", err)
+	}
+
+	return chats, nil
+}
+
+// AddMessageToChat appends a new message to the chat's chat_data JSONB field.
+func (s *PostgresStore) AddMessageToChat(ctx context.Context, chatID uuid.UUID, message models.ChatMessage, orgID uuid.UUID) error {
+	// First, get the current chat to verify access and get current chat_data
+	chat, err := s.GetChatByID(ctx, chatID, orgID)
+	if err != nil {
+		return fmt.Errorf("failed to retrieve chat: %w", err)
+	}
+
+	// Parse existing messages
+	var messages []models.ChatMessage
+	if err := json.Unmarshal(chat.ChatData, &messages); err != nil {
+		return fmt.Errorf("failed to parse chat data: %w", err)
+	}
+
+	// Ensure the message has SentBy set to match Role if not already set
+	if message.SentBy == "" {
+		message.SentBy = message.Role
+	}
+
+	// Set Hide to 0 (visible) if not explicitly set
+	// Hide == 1 means hidden, Hide == 0 means visible
+
+	// Append new message
+	messages = append(messages, message)
+
+	// Marshal back to JSON
+	updatedData, err := json.Marshal(messages)
+	if err != nil {
+		return fmt.Errorf("failed to marshal updated chat data: %w", err)
+	}
+
+	// Update the chat in the database
+	const updateChatData = `
+		UPDATE chats
+		SET chat_data = $1, updated_at = NOW()
+		WHERE id = $2 AND organization_id = $3;
+	`
+
+	tag, err := s.db.Exec(ctx, updateChatData, updatedData, chatID, orgID)
+	if err != nil {
+		return fmt.Errorf("failed to update chat data: %w", err)
+	}
+
+	if tag.RowsAffected() == 0 {
+		return store.ErrNotFound
+	}
+
+	return nil
+}
+
+// UpdateChatStatus updates the status of a chat.
+func (s *PostgresStore) UpdateChatStatus(ctx context.Context, chatID uuid.UUID, status string, orgID uuid.UUID) error {
+	// Validate status is one of the allowed values
+	validStatuses := []string{"ACTIVE", "PROCESSING", "COMPLETED", "ERROR"}
+	isValid := false
+	for _, validStatus := range validStatuses {
+		if status == validStatus {
+			isValid = true
+			break
+		}
+	}
+
+	if !isValid {
+		return fmt.Errorf("invalid status: %s", status)
+	}
+
+	const updateStatus = `
+		UPDATE chats
+		SET status = $1, updated_at = NOW()
+		WHERE id = $2 AND organization_id = $3;
+	`
+
+	tag, err := s.db.Exec(ctx, updateStatus, status, chatID, orgID)
+	if err != nil {
+		return fmt.Errorf("failed to update chat status: %w", err)
+	}
+
+	if tag.RowsAffected() == 0 {
+		return store.ErrNotFound
+	}
+
+	return nil
+}
+
+// UpdateChatFeedback updates the feedback value of a chat.
+func (s *PostgresStore) UpdateChatFeedback(ctx context.Context, chatID uuid.UUID, feedback int8, orgID uuid.UUID) error {
+	// Validate feedback is one of the allowed values (-1, 0, 1)
+	if feedback < -1 || feedback > 1 {
+		return fmt.Errorf("invalid feedback value: %d, must be -1, 0, or 1", feedback)
+	}
+
+	const updateFeedback = `
+		UPDATE chats
+		SET feedback = $1, updated_at = NOW()
+		WHERE id = $2 AND organization_id = $3;
+	`
+
+	tag, err := s.db.Exec(ctx, updateFeedback, feedback, chatID, orgID)
+	if err != nil {
+		return fmt.Errorf("failed to update chat feedback: %w", err)
+	}
+
+	if tag.RowsAffected() == 0 {
+		return store.ErrNotFound
+	}
+
+	return nil
 }

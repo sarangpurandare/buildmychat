@@ -1,0 +1,150 @@
+{
+  "info": {
+    "name": "BuildMyChat API - Chats",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "item": [
+    {
+      "name": "Create Chat",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          },
+          {
+            "key": "Authorization",
+            "value": "Bearer {{jwt_token}}"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n    \"chatbot_id\": \"{{chatbot_id}}\",\n    \"initial_message\": \"Hello, how can you help me with BuildMyChat?\"\n}"
+        },
+        "url": {
+          "raw": "{{base_url}}/v1/chats",
+          "host": ["{{base_url}}"],
+          "path": ["v1", "chats"]
+        }
+      }
+    },
+    {
+      "name": "Get Chat by ID",
+      "request": {
+        "method": "GET",
+        "header": [
+          {
+            "key": "Authorization",
+            "value": "Bearer {{jwt_token}}"
+          }
+        ],
+        "url": {
+          "raw": "{{base_url}}/v1/chats/{{chat_id}}",
+          "host": ["{{base_url}}"],
+          "path": ["v1", "chats", "{{chat_id}}"]
+        }
+      }
+    },
+    {
+      "name": "List Chats",
+      "request": {
+        "method": "GET",
+        "header": [
+          {
+            "key": "Authorization",
+            "value": "Bearer {{jwt_token}}"
+          }
+        ],
+        "url": {
+          "raw": "{{base_url}}/v1/chats?limit=10&offset=0",
+          "host": ["{{base_url}}"],
+          "path": ["v1", "chats"],
+          "query": [
+            {
+              "key": "limit",
+              "value": "10"
+            },
+            {
+              "key": "offset",
+              "value": "0"
+            },
+            {
+              "key": "chatbot_id",
+              "value": "{{chatbot_id}}",
+              "disabled": true
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "Add User Message",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          },
+          {
+            "key": "Authorization",
+            "value": "Bearer {{jwt_token}}"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n    \"message\": \"Tell me more about how BuildMyChat works with Notion integration.\"\n}"
+        },
+        "url": {
+          "raw": "{{base_url}}/v1/chats/{{chat_id}}/messages/user",
+          "host": ["{{base_url}}"],
+          "path": ["v1", "chats", "{{chat_id}}", "messages", "user"]
+        }
+      }
+    },
+    {
+      "name": "Add Assistant Message",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          },
+          {
+            "key": "Authorization",
+            "value": "Bearer {{jwt_token}}"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n    \"message\": \"BuildMyChat's Notion integration allows you to connect your Notion workspace as a knowledge base. It indexes your Notion pages and databases, making their content searchable via our vector database. When questions are asked through an interface like Slack, BuildMyChat searches through this indexed Notion content to find relevant information to include in its responses.\",\n    \"metadata\": {\n        \"source_ids\": [\"notion:page:123-456-789\", \"notion:database:234-567-890\"],\n        \"confidence\": 0.87\n    }\n}"
+        },
+        "url": {
+          "raw": "{{base_url}}/v1/chats/{{chat_id}}/messages/assistant",
+          "host": ["{{base_url}}"],
+          "path": ["v1", "chats", "{{chat_id}}", "messages", "assistant"]
+        }
+      }
+    }
+  ],
+  "variable": [
+    {
+      "key": "base_url",
+      "value": "http://localhost:8080"
+    },
+    {
+      "key": "jwt_token",
+      "value": "your-jwt-token-here"
+    },
+    {
+      "key": "chatbot_id",
+      "value": "your-chatbot-id-here"
+    },
+    {
+      "key": "chat_id",
+      "value": "your-chat-id-here"
+    }
+  ]
+} 

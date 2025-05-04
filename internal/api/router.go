@@ -20,9 +20,9 @@ type RouterDependencies struct {
 	KBHandler          *handlers.KBHandler
 	InterfaceHandler   *handlers.InterfaceHandler
 	ChatbotHandler     *handlers.ChatbotHandlers
+	ChatHandler        *handlers.ChatHandlers
 	// OrgHandler        *handlers.OrgHandler
 	// NodeHandler       *handlers.NodeHandler
-	// ChatHandler       *handlers.ChatHandler
 	// WebhookHandler    *handlers.WebhookHandler
 	// BillingHandler    *handlers.BillingHandler
 	Config *config.Config
@@ -143,17 +143,20 @@ func NewRouter(deps RouterDependencies) *chi.Mux {
 			log.Println("WARN: ChatbotHandler dependency is nil, skipping /v1/chatbots routes.")
 		}
 
-		// Example: Chatbot and Node routes (Now Chatbot and Mapping routes)
-		// if deps.ChatbotHandler != nil /* && deps.MappingHandler != nil */ {
-		// 	 r.Route("/chatbots", func(r chi.Router) {
-		// 		 r.Post("/", deps.ChatbotHandler.HandleCreateChatbot)
-		// 		 r.Get("/", deps.ChatbotHandler.HandleListChatbots)
-		// 		 // ... other chatbot routes /{chatbot_id}
-		// 		 r.Route("/{chatbot_id}/nodes", func(r chi.Router) {
-		// 			 // Mount NodeHandler methods here...
-		// 		 })
-		// 	 })
-		// }
+		// --- Mount Chat Routes ---
+		if deps.ChatHandler != nil {
+			r.Route("/chats", func(r chi.Router) {
+				r.Post("/", deps.ChatHandler.HandleCreateChat)
+				r.Get("/", deps.ChatHandler.HandleListChats)
+				r.Get("/{chatID}", deps.ChatHandler.HandleGetChatByID)
+
+				// Message APIs
+				r.Post("/{chatID}/messages/user", deps.ChatHandler.HandleAddUserMessage)
+				r.Post("/{chatID}/messages/assistant", deps.ChatHandler.HandleAddAssistantMessage)
+			})
+		} else {
+			log.Println("WARN: ChatHandler dependency is nil, skipping /v1/chats routes.")
+		}
 
 		// Example: Chat routes
 		// if deps.ChatHandler != nil {
