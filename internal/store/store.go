@@ -1,9 +1,12 @@
 package store
 
 import (
+	"buildmychat-backend/internal/models"
 	db_models "buildmychat-backend/internal/models"
 	"context"
 	"errors"
+
+	"encoding/json"
 
 	"github.com/google/uuid"
 )
@@ -100,6 +103,42 @@ type Store interface {
 
 	// Add other interfaces for Chatbots, Mappings, Chats, etc.
 	// ...
+
+	// Chatbot operations
+	CreateChatbot(ctx context.Context, arg CreateChatbotParams) (models.Chatbot, error)
+	GetChatbotByID(ctx context.Context, id uuid.UUID, organizationID uuid.UUID) (models.Chatbot, error)
+	ListChatbots(ctx context.Context, organizationID uuid.UUID) ([]models.Chatbot, error)
+	UpdateChatbot(ctx context.Context, arg UpdateChatbotParams) (models.Chatbot, error)
+	UpdateChatbotStatus(ctx context.Context, id uuid.UUID, organizationID uuid.UUID, isActive bool) error
+	DeleteChatbot(ctx context.Context, id uuid.UUID, organizationID uuid.UUID) error
+
+	// Chatbot Mapping operations
+	AddKnowledgeBaseMapping(ctx context.Context, chatbotID, kbID, orgID uuid.UUID) error
+	RemoveKnowledgeBaseMapping(ctx context.Context, chatbotID, kbID, orgID uuid.UUID) error
+	AddInterfaceMapping(ctx context.Context, chatbotID, interfaceID, orgID uuid.UUID) error
+	RemoveInterfaceMapping(ctx context.Context, chatbotID, interfaceID, orgID uuid.UUID) error
+	GetChatbotMappings(ctx context.Context, chatbotID, orgID uuid.UUID) (*models.ChatbotMappingsResponse, error)
 }
 
 // Implementations below were moved to internal/store/postgres/store.go
+
+// Placeholder parameter structs (define these properly based on needed fields)
+
+// ... existing params ...
+
+type CreateChatbotParams struct {
+	OrganizationID uuid.UUID
+	Name           *string // Pointer to handle optional name on creation
+	SystemPrompt   *string
+	LLMModel       *string
+	Configuration  *json.RawMessage // Use pointer to handle potential nil
+}
+
+type UpdateChatbotParams struct {
+	ID             uuid.UUID
+	OrganizationID uuid.UUID
+	Name           *string // Pointers allow partial updates
+	SystemPrompt   *string
+	LLMModel       *string
+	Configuration  *json.RawMessage
+}

@@ -68,12 +68,14 @@ type Interface struct {
 // Chatbot represents the central hub entity.
 // Adding this for reference as it's used in mapping tables.
 type Chatbot struct {
-	ID             uuid.UUID `db:"id"`
-	OrganizationID uuid.UUID `db:"organization_id"`
-	Name           string    `db:"name"`
-	SystemPrompt   *string   `db:"system_prompt"` // Use pointer for nullable text
-	IsActive       bool      `db:"is_active"`
-	ChatCount      int64     `db:"chat_count"`
-	CreatedAt      time.Time `db:"created_at"`
-	UpdatedAt      time.Time `db:"updated_at"`
+	ID             uuid.UUID       `db:"id"`
+	OrganizationID uuid.UUID       `db:"organization_id"`
+	Name           string          `db:"name"`
+	SystemPrompt   *string         `db:"system_prompt"` // Use pointer for nullable text
+	IsActive       bool            `db:"is_active"`
+	ChatCount      int64           `db:"chat_count"`
+	LLMModel       *string         `db:"llm_model"`     // Use pointer for nullable varchar
+	Configuration  json.RawMessage `db:"configuration"` // Stored as JSONB
+	CreatedAt      time.Time       `db:"created_at"`
+	UpdatedAt      time.Time       `db:"updated_at"`
 }

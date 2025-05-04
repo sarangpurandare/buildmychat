@@ -1,13 +1,17 @@
 package postgres
 
 import (
+	"buildmychat-backend/internal/models"
 	db_models "buildmychat-backend/internal/models"
 	"buildmychat-backend/internal/store"
 	"context"
 	"errors"
 	"fmt"
 	"log"
+	"strings"
+	"time"
 
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -118,3 +122,453 @@ func (s *PostgresStore) CreateOrganization(ctx context.Context, org *db_models.O
 
 // Methods for other entities (Credentials, KB, Interface, etc.) are now in separate files
 // (e.g., store_credentials.go, store_kb.go, store_interface.go)
+
+// --- Chatbot Methods ---
+
+const createChatbot = `-- name: CreateChatbot :one
+INSERT INTO chatbots (
+    organization_id, name, system_prompt, llm_model, configuration
+) VALUES (
+    $1, $2, $3, $4, $5
+)
+RETURNING id, organization_id, name, system_prompt, is_active, chat_count, llm_model, configuration, created_at, updated_at;
+`
+
+func (s *PostgresStore) CreateChatbot(ctx context.Context, arg store.CreateChatbotParams) (models.Chatbot, error) {
+	row := s.db.QueryRow(ctx, createChatbot,
+		arg.OrganizationID,
+		arg.Name, // pgx handles *string to NULL automatically
+		arg.SystemPrompt,
+		arg.LLMModel,
+		arg.Configuration, // pgx handles *json.RawMessage to NULL
+	)
+	var i models.Chatbot
+	err := row.Scan(
+		&i.ID,
+		&i.OrganizationID,
+		&i.Name,
+		&i.SystemPrompt,
+		&i.IsActive,
+		&i.ChatCount,
+		&i.LLMModel,
+		&i.Configuration,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	// Handle potential default name scenario if needed, though DB handles it
+	// if arg.Name == nil { // Example: Set a default name if nil was passed
+	// 	 // update query here if needed, though creating with NULL is usually fine
+	// }
+	return i, err // pgx automatically maps pgx.ErrNoRows to store.ErrNotFound if Scan fails
+}
+
+const getChatbotByID = `-- name: GetChatbotByID :one
+SELECT id, organization_id, name, system_prompt, is_active, chat_count, llm_model, configuration, created_at, updated_at
+FROM chatbots
+WHERE id = $1 AND organization_id = $2;
+`
+
+func (s *PostgresStore) GetChatbotByID(ctx context.Context, id uuid.UUID, organizationID uuid.UUID) (models.Chatbot, error) {
+	row := s.db.QueryRow(ctx, getChatbotByID, id, organizationID)
+	var i models.Chatbot
+	err := row.Scan(
+		&i.ID,
+		&i.OrganizationID,
+		&i.Name,
+		&i.SystemPrompt,
+		&i.IsActive,
+		&i.ChatCount,
+		&i.LLMModel,
+		&i.Configuration,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return models.Chatbot{}, store.ErrNotFound
+		}
+		return models.Chatbot{}, fmt.Errorf("error scanning chatbot: %w", err)
+	}
+	return i, nil
+}
+
+const listChatbots = `-- name: ListChatbots :many
+SELECT id, organization_id, name, system_prompt, is_active, chat_count, llm_model, configuration, created_at, updated_at
+FROM chatbots
+WHERE organization_id = $1
+ORDER BY created_at DESC;
+`
+
+func (s *PostgresStore) ListChatbots(ctx context.Context, organizationID uuid.UUID) ([]models.Chatbot, error) {
+	rows, err := s.db.Query(ctx, listChatbots, organizationID)
+	if err != nil {
+		return nil, fmt.Errorf("error querying chatbots: %w", err)
+	}
+	defer rows.Close()
+
+	var items []models.Chatbot
+	for rows.Next() {
+		var i models.Chatbot
+		if err := rows.Scan(
+			&i.ID,
+			&i.OrganizationID,
+			&i.Name,
+			&i.SystemPrompt,
+			&i.IsActive,
+			&i.ChatCount,
+			&i.LLMModel,
+			&i.Configuration,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+		); err != nil {
+			return nil, fmt.Errorf("error scanning chatbot row: %w", err)
+		}
+		items = append(items, i)
+	}
+
+	if err = rows.Err(); err != nil {
+		return nil, fmt.Errorf("error iterating chatbot rows: %w", err)
+	}
+
+	return items, nil
+}
+
+// UpdateChatbot builds the query dynamically based on which fields are provided.
+func (s *PostgresStore) UpdateChatbot(ctx context.Context, arg store.UpdateChatbotParams) (models.Chatbot, error) {
+	setClauses := []string{}
+	args := []interface{}{}
+	argID := 1
+
+	if arg.Name != nil {
+		setClauses = append(setClauses, fmt.Sprintf("name = $%d", argID))
+		args = append(args, *arg.Name)
+		argID++
+	}
+	if arg.SystemPrompt != nil {
+		setClauses = append(setClauses, fmt.Sprintf("system_prompt = $%d", argID))
+		args = append(args, *arg.SystemPrompt)
+		argID++
+	}
+	if arg.LLMModel != nil {
+		setClauses = append(setClauses, fmt.Sprintf("llm_model = $%d", argID))
+		args = append(args, *arg.LLMModel)
+		argID++
+	}
+	if arg.Configuration != nil {
+		setClauses = append(setClauses, fmt.Sprintf("configuration = $%d", argID))
+		args = append(args, *arg.Configuration) // Pass the raw message directly
+		argID++
+	}
+
+	if len(setClauses) == 0 {
+		// No fields to update, maybe return the existing record or an error
+		return s.GetChatbotByID(ctx, arg.ID, arg.OrganizationID)
+	}
+
+	// Always update the updated_at timestamp
+	setClauses = append(setClauses, fmt.Sprintf("updated_at = $%d", argID))
+	args = append(args, time.Now())
+	argID++
+
+	// Add WHERE clause parameters
+	args = append(args, arg.ID)
+	args = append(args, arg.OrganizationID)
+
+	query := fmt.Sprintf(`-- name: UpdateChatbot :one
+		UPDATE chatbots
+		SET %s
+		WHERE id = $%d AND organization_id = $%d
+		RETURNING id, organization_id, name, system_prompt, is_active, chat_count, llm_model, configuration, created_at, updated_at;`,
+		strings.Join(setClauses, ", "),
+		argID,   // ID placeholder index
+		argID+1, // OrganizationID placeholder index
+	)
+
+	row := s.db.QueryRow(ctx, query, args...)
+	var i models.Chatbot
+	err := row.Scan(
+		&i.ID,
+		&i.OrganizationID,
+		&i.Name,
+		&i.SystemPrompt,
+		&i.IsActive,
+		&i.ChatCount,
+		&i.LLMModel,
+		&i.Configuration,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			// This could mean the chatbot didn't exist or org ID didn't match
+			return models.Chatbot{}, store.ErrNotFound
+		}
+		return models.Chatbot{}, fmt.Errorf("error scanning updated chatbot: %w", err)
+	}
+	return i, nil
+}
+
+const updateChatbotStatus = `-- name: UpdateChatbotStatus :exec
+UPDATE chatbots
+SET is_active = $1, updated_at = NOW()
+WHERE id = $2 AND organization_id = $3;
+`
+
+func (s *PostgresStore) UpdateChatbotStatus(ctx context.Context, id uuid.UUID, organizationID uuid.UUID, isActive bool) error {
+	tag, err := s.db.Exec(ctx, updateChatbotStatus, isActive, id, organizationID)
+	if err != nil {
+		return fmt.Errorf("error executing update chatbot status: %w", err)
+	}
+	if tag.RowsAffected() == 0 {
+		// Could be due to wrong ID or OrgID not matching
+		return store.ErrNotFound
+	}
+	return nil
+}
+
+const deleteChatbot = `-- name: DeleteChatbot :exec
+DELETE FROM chatbots
+WHERE id = $1 AND organization_id = $2;
+`
+
+func (s *PostgresStore) DeleteChatbot(ctx context.Context, id uuid.UUID, organizationID uuid.UUID) error {
+	tag, err := s.db.Exec(ctx, deleteChatbot, id, organizationID)
+	if err != nil {
+		return fmt.Errorf("error executing delete chatbot: %w", err)
+	}
+	if tag.RowsAffected() == 0 {
+		// Could be due to wrong ID or OrgID not matching
+		return store.ErrNotFound
+	}
+	return nil
+}
+
+// --- Chatbot Mapping Methods ---
+
+const addKnowledgeBaseMapping = `-- name: AddKnowledgeBaseMapping :exec
+INSERT INTO chatbot_kb_mappings (
+    chatbot_id, kb_id
+) VALUES (
+    $1, $2
+)
+ON CONFLICT (chatbot_id, kb_id) DO NOTHING;
+`
+
+func (s *PostgresStore) AddKnowledgeBaseMapping(ctx context.Context, chatbotID, kbID, orgID uuid.UUID) error {
+	// First verify both IDs belong to the organization
+	_, err := s.GetChatbotByID(ctx, chatbotID, orgID)
+	if err != nil {
+		return fmt.Errorf("failed to verify chatbot: %w", err)
+	}
+
+	_, err = s.GetKnowledgeBaseByID(ctx, kbID, orgID)
+	if err != nil {
+		return fmt.Errorf("failed to verify knowledge base: %w", err)
+	}
+
+	// Both exist and belong to the organization, proceed with mapping
+	_, err = s.db.Exec(ctx, addKnowledgeBaseMapping, chatbotID, kbID)
+	if err != nil {
+		return fmt.Errorf("failed to add knowledge base mapping: %w", err)
+	}
+
+	return nil
+}
+
+const removeKnowledgeBaseMapping = `-- name: RemoveKnowledgeBaseMapping :exec
+DELETE FROM chatbot_kb_mappings
+WHERE chatbot_id = $1 AND kb_id = $2;
+`
+
+func (s *PostgresStore) RemoveKnowledgeBaseMapping(ctx context.Context, chatbotID, kbID, orgID uuid.UUID) error {
+	// Verify chatbot belongs to organization
+	_, err := s.GetChatbotByID(ctx, chatbotID, orgID)
+	if err != nil {
+		return fmt.Errorf("failed to verify chatbot: %w", err)
+	}
+
+	tag, err := s.db.Exec(ctx, removeKnowledgeBaseMapping, chatbotID, kbID)
+	if err != nil {
+		return fmt.Errorf("failed to remove knowledge base mapping: %w", err)
+	}
+
+	if tag.RowsAffected() == 0 {
+		return store.ErrNotFound
+	}
+
+	return nil
+}
+
+const addInterfaceMapping = `-- name: AddInterfaceMapping :exec
+INSERT INTO chatbot_interface_mappings (
+    chatbot_id, interface_id
+) VALUES (
+    $1, $2
+)
+ON CONFLICT (chatbot_id, interface_id) DO NOTHING;
+`
+
+func (s *PostgresStore) AddInterfaceMapping(ctx context.Context, chatbotID, interfaceID, orgID uuid.UUID) error {
+	// First verify both IDs belong to the organization
+	_, err := s.GetChatbotByID(ctx, chatbotID, orgID)
+	if err != nil {
+		return fmt.Errorf("failed to verify chatbot: %w", err)
+	}
+
+	_, err = s.GetInterfaceByID(ctx, interfaceID, orgID)
+	if err != nil {
+		return fmt.Errorf("failed to verify interface: %w", err)
+	}
+
+	// Both exist and belong to the organization, proceed with mapping
+	_, err = s.db.Exec(ctx, addInterfaceMapping, chatbotID, interfaceID)
+	if err != nil {
+		return fmt.Errorf("failed to add interface mapping: %w", err)
+	}
+
+	return nil
+}
+
+const removeInterfaceMapping = `-- name: RemoveInterfaceMapping :exec
+DELETE FROM chatbot_interface_mappings
+WHERE chatbot_id = $1 AND interface_id = $2;
+`
+
+func (s *PostgresStore) RemoveInterfaceMapping(ctx context.Context, chatbotID, interfaceID, orgID uuid.UUID) error {
+	// Verify chatbot belongs to organization
+	_, err := s.GetChatbotByID(ctx, chatbotID, orgID)
+	if err != nil {
+		return fmt.Errorf("failed to verify chatbot: %w", err)
+	}
+
+	tag, err := s.db.Exec(ctx, removeInterfaceMapping, chatbotID, interfaceID)
+	if err != nil {
+		return fmt.Errorf("failed to remove interface mapping: %w", err)
+	}
+
+	if tag.RowsAffected() == 0 {
+		return store.ErrNotFound
+	}
+
+	return nil
+}
+
+func (s *PostgresStore) GetChatbotMappings(ctx context.Context, chatbotID, orgID uuid.UUID) (*models.ChatbotMappingsResponse, error) {
+	// First verify the chatbot exists and belongs to the organization
+	_, err := s.GetChatbotByID(ctx, chatbotID, orgID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to verify chatbot: %w", err)
+	}
+
+	// Fetch knowledge base mappings
+	const getKBMappings = `
+		SELECT kb.id, kb.organization_id, kb.credential_id, kb.service_type, kb.name, kb.configuration, kb.is_active, kb.created_at, kb.updated_at
+		FROM knowledge_bases kb
+		JOIN chatbot_kb_mappings map ON kb.id = map.kb_id
+		WHERE map.chatbot_id = $1 AND kb.organization_id = $2
+	`
+
+	kbRows, err := s.db.Query(ctx, getKBMappings, chatbotID, orgID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to fetch knowledge base mappings: %w", err)
+	}
+	defer kbRows.Close()
+
+	var kbs []models.KnowledgeBase
+	for kbRows.Next() {
+		var kb models.KnowledgeBase
+		if err := kbRows.Scan(
+			&kb.ID,
+			&kb.OrganizationID,
+			&kb.CredentialID,
+			&kb.ServiceType,
+			&kb.Name,
+			&kb.Configuration,
+			&kb.IsActive,
+			&kb.CreatedAt,
+			&kb.UpdatedAt,
+		); err != nil {
+			return nil, fmt.Errorf("failed to scan knowledge base: %w", err)
+		}
+		kbs = append(kbs, kb)
+	}
+	if err = kbRows.Err(); err != nil {
+		return nil, fmt.Errorf("error iterating over knowledge base rows: %w", err)
+	}
+
+	// Fetch interface mappings
+	const getInterfaceMappings = `
+		SELECT i.id, i.organization_id, i.credential_id, i.service_type, i.name, i.configuration, i.is_active, i.created_at, i.updated_at
+		FROM interfaces i
+		JOIN chatbot_interface_mappings map ON i.id = map.interface_id
+		WHERE map.chatbot_id = $1 AND i.organization_id = $2
+	`
+
+	ifaceRows, err := s.db.Query(ctx, getInterfaceMappings, chatbotID, orgID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to fetch interface mappings: %w", err)
+	}
+	defer ifaceRows.Close()
+
+	var ifaces []models.Interface
+	for ifaceRows.Next() {
+		var iface models.Interface
+		if err := ifaceRows.Scan(
+			&iface.ID,
+			&iface.OrganizationID,
+			&iface.CredentialID,
+			&iface.ServiceType,
+			&iface.Name,
+			&iface.Configuration,
+			&iface.IsActive,
+			&iface.CreatedAt,
+			&iface.UpdatedAt,
+		); err != nil {
+			return nil, fmt.Errorf("failed to scan interface: %w", err)
+		}
+		ifaces = append(ifaces, iface)
+	}
+	if err = ifaceRows.Err(); err != nil {
+		return nil, fmt.Errorf("error iterating over interface rows: %w", err)
+	}
+
+	// Convert to response DTOs
+	result := &models.ChatbotMappingsResponse{}
+
+	if len(kbs) > 0 {
+		result.KnowledgeBases = make([]models.KnowledgeBaseResponse, len(kbs))
+		for i, kb := range kbs {
+			result.KnowledgeBases[i] = models.KnowledgeBaseResponse{
+				ID:             kb.ID,
+				OrganizationID: kb.OrganizationID,
+				CredentialID:   kb.CredentialID,
+				ServiceType:    kb.ServiceType,
+				Name:           kb.Name,
+				Configuration:  kb.Configuration,
+				IsActive:       kb.IsActive,
+				CreatedAt:      kb.CreatedAt,
+				UpdatedAt:      kb.UpdatedAt,
+			}
+		}
+	}
+
+	if len(ifaces) > 0 {
+		result.Interfaces = make([]models.InterfaceResponse, len(ifaces))
+		for i, iface := range ifaces {
+			result.Interfaces[i] = models.InterfaceResponse{
+				ID:             iface.ID,
+				OrganizationID: iface.OrganizationID,
+				CredentialID:   iface.CredentialID,
+				ServiceType:    iface.ServiceType,
+				Name:           iface.Name,
+				Configuration:  iface.Configuration,
+				IsActive:       iface.IsActive,
+				CreatedAt:      iface.CreatedAt,
+				UpdatedAt:      iface.UpdatedAt,
+			}
+		}
+	}
+
+	return result, nil
+}

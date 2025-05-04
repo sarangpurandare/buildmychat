@@ -125,3 +125,69 @@ type InterfaceResponse struct {
 	CreatedAt      time.Time       `json:"created_at"`
 	UpdatedAt      time.Time       `json:"updated_at"`
 }
+
+// --- Chatbot DTOs ---
+
+// CreateChatbotRequest defines the payload for creating a new chatbot.
+// Name is optional initially, can be set later via update.
+type CreateChatbotRequest struct {
+	Name         *string `json:"name"` // Optional
+	SystemPrompt *string `json:"system_prompt"`
+	LLMModel     *string `json:"llm_model"`
+	// Configuration can be set during creation if needed, but often set later.
+	Configuration *json.RawMessage `json:"configuration"`
+}
+
+// ChatbotResponse defines the standard representation of a chatbot in API responses.
+type ChatbotResponse struct {
+	ID             uuid.UUID        `json:"id"`
+	OrganizationID uuid.UUID        `json:"organization_id"`
+	Name           string           `json:"name"` // Note: Name might be empty initially if not provided on create
+	SystemPrompt   *string          `json:"system_prompt"`
+	IsActive       bool             `json:"is_active"`
+	ChatCount      int64            `json:"chat_count"`
+	LLMModel       *string          `json:"llm_model"`
+	Configuration  *json.RawMessage `json:"configuration"`
+	CreatedAt      time.Time        `json:"created_at"`
+	UpdatedAt      time.Time        `json:"updated_at"`
+	// Nested connected resources
+	KnowledgeBases []KnowledgeBaseResponse `json:"knowledge_bases,omitempty"`
+	Interfaces     []InterfaceResponse     `json:"interfaces,omitempty"`
+}
+
+// UpdateChatbotRequest defines the payload for updating an existing chatbot.
+// Only fields present in the request will be updated.
+type UpdateChatbotRequest struct {
+	Name          *string          `json:"name"`
+	SystemPrompt  *string          `json:"system_prompt"`
+	LLMModel      *string          `json:"llm_model"`
+	Configuration *json.RawMessage `json:"configuration"` // Allows updating parts or all of config
+}
+
+// UpdateChatbotStatusRequest defines the payload for activating/deactivating a chatbot.
+type UpdateChatbotStatusRequest struct {
+	IsActive bool `json:"is_active"`
+}
+
+// ListChatbotsResponse defines the response structure for listing chatbots.
+type ListChatbotsResponse struct {
+	Chatbots []ChatbotResponse `json:"chatbots"`
+}
+
+// --- Chatbot Mapping DTOs ---
+
+// AddKnowledgeBaseRequest defines the request for adding a KB to a chatbot
+type AddKnowledgeBaseRequest struct {
+	KBID uuid.UUID `json:"kb_id"`
+}
+
+// AddInterfaceRequest defines the request for adding an interface to a chatbot
+type AddInterfaceRequest struct {
+	InterfaceID uuid.UUID `json:"interface_id"`
+}
+
+// ChatbotMappingsResponse defines the response structure for listing chatbot connections
+type ChatbotMappingsResponse struct {
+	KnowledgeBases []KnowledgeBaseResponse `json:"knowledge_bases,omitempty"`
+	Interfaces     []InterfaceResponse     `json:"interfaces,omitempty"`
+}

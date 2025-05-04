@@ -19,8 +19,8 @@ type RouterDependencies struct {
 	CredentialsHandler *handlers.CredentialsHandler
 	KBHandler          *handlers.KBHandler
 	InterfaceHandler   *handlers.InterfaceHandler
+	ChatbotHandler     *handlers.ChatbotHandlers
 	// OrgHandler        *handlers.OrgHandler
-	// ChatbotHandler    *handlers.ChatbotHandler
 	// NodeHandler       *handlers.NodeHandler
 	// ChatHandler       *handlers.ChatHandler
 	// WebhookHandler    *handlers.WebhookHandler
@@ -120,6 +120,27 @@ func NewRouter(deps RouterDependencies) *chi.Mux {
 			})
 		} else {
 			log.Println("WARN: InterfaceHandler dependency is nil, skipping /v1/interfaces routes.")
+		}
+
+		// --- Mount Chatbot Routes ---
+		if deps.ChatbotHandler != nil {
+			r.Route("/chatbots", func(r chi.Router) {
+				r.Post("/", deps.ChatbotHandler.CreateChatbot)
+				r.Get("/", deps.ChatbotHandler.ListChatbots)
+				r.Get("/{chatbotID}", deps.ChatbotHandler.GetChatbotByID)
+				r.Put("/{chatbotID}", deps.ChatbotHandler.UpdateChatbot)
+				r.Patch("/{chatbotID}/status", deps.ChatbotHandler.UpdateChatbotStatus)
+				r.Delete("/{chatbotID}", deps.ChatbotHandler.DeleteChatbot)
+
+				// Chatbot mappings
+				r.Get("/{chatbotID}/mappings", deps.ChatbotHandler.GetChatbotMappings)
+				r.Post("/{chatbotID}/knowledge-bases", deps.ChatbotHandler.AddKnowledgeBase)
+				r.Delete("/{chatbotID}/knowledge-bases/{kbID}", deps.ChatbotHandler.RemoveKnowledgeBase)
+				r.Post("/{chatbotID}/interfaces", deps.ChatbotHandler.AddInterface)
+				r.Delete("/{chatbotID}/interfaces/{interfaceID}", deps.ChatbotHandler.RemoveInterface)
+			})
+		} else {
+			log.Println("WARN: ChatbotHandler dependency is nil, skipping /v1/chatbots routes.")
 		}
 
 		// Example: Chatbot and Node routes (Now Chatbot and Mapping routes)
