@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log"
 
 	"github.com/jomei/notionapi"
 )
@@ -23,30 +24,34 @@ func NewNotionIntegration() *NotionIntegration {
 	return &NotionIntegration{}
 }
 
-// ValidateConfig checks if the provided JSON conforms to the NotionKBConfig structure
-// and ensures at least one Notion Object ID is provided.
+// ValidateConfig checks if the provided JSON conforms to the NotionKBConfig structure.
+// It no longer requires notion_object_ids to be present.
 func (n *NotionIntegration) ValidateConfig(configJSON json.RawMessage) error {
-	var config integration_models.NotionKBConfig
-
+	// Allow empty/null config - signifies access to all permitted resources
 	if len(configJSON) == 0 || string(configJSON) == "null" {
-		// Consider empty/null config valid, perhaps implying default behavior later?
-		// For now, let's require object IDs.
-		return errors.New("notion configuration cannot be empty, 'notion_object_ids' is required")
+		log.Printf("[NotionIntegration] ValidateConfig: Received empty/null config, assuming access to all permitted resources.")
+		return nil
 	}
 
+	// Attempt to unmarshal if config is provided, but don't fail validation based on it.
+	var config integration_models.NotionKBConfig
 	err := json.Unmarshal(configJSON, &config)
 	if err != nil {
+		// Still return error for malformed JSON
 		return fmt.Errorf("invalid JSON format for Notion configuration: %w", err)
 	}
 
-	// Specific Notion validation
-	if len(config.NotionObjectIDs) == 0 {
-		return errors.New("'notion_object_ids' must contain at least one Notion Page or Database ID")
+	// Removed: Check for empty config.NotionObjectIDs
+	// if len(config.NotionObjectIDs) == 0 { ... }
+
+	// Log if specific IDs were provided
+	if len(config.NotionObjectIDs) > 0 {
+		log.Printf("[NotionIntegration] ValidateConfig: Received config with %d specific Notion Object IDs.", len(config.NotionObjectIDs))
 	}
 
-	// TODO: Potentially add validation for the format of Notion Object IDs (UUID format)
+	// TODO: Potentially add validation for the format of Notion Object IDs if present
 
-	return nil // Configuration is valid
+	return nil // Configuration format is valid (or config was empty/null)
 }
 
 // TestConnection tests the connection to Notion using the API key.

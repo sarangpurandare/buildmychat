@@ -76,10 +76,10 @@ func (s *credentialsService) CreateCredential(ctx context.Context, req api_model
 		return nil, fmt.Errorf("%w: credentials map cannot be empty", ErrCredentialValidation)
 	}
 
-	// --- Pre-Save Test and Name Fetch for Notion ---
-	var finalCredentialName string // Initialize as empty string
-	if req.CredentialName != nil { // Check if pointer is not nil
-		finalCredentialName = *req.CredentialName // Dereference to get the value if provided
+	// --- Pre-Save Test and Name Fetch ---
+	var finalCredentialName string
+	if req.CredentialName != nil {
+		finalCredentialName = *req.CredentialName
 	}
 
 	if req.ServiceType == api_models.ServiceTypeNotion {
@@ -108,11 +108,36 @@ func (s *credentialsService) CreateCredential(ctx context.Context, req api_model
 
 		// Test succeeded, get the bot name from details
 		if botName, ok := testResult.Details["bot_name"].(string); ok && botName != "" {
-			finalCredentialName = botName // Overwrite with fetched name
+			finalCredentialName = botName
 			log.Printf("[CredService] CreateCredential: Notion test successful. Using fetched bot name: '%s' for OrgID %s", finalCredentialName, orgID)
 		} else {
-			// Use the provided name (which might be empty) if fetching failed
 			log.Printf("WARN [CredService] CreateCredential: Notion test successful but failed to extract bot name for OrgID %s. Using provided/default name: '%s'", orgID, finalCredentialName)
+		}
+	} else if req.ServiceType == api_models.ServiceTypeSlack { // Added block for Slack
+		log.Printf("[CredService] CreateCredential: Slack type detected, performing pre-save test for OrgID %s", orgID)
+		integration, err := s.registry.Get(string(api_models.ServiceTypeSlack))
+		if err != nil {
+			log.Printf("ERROR [CredService] CreateCredential: Failed to get Slack integration handler: %v", err)
+			return nil, fmt.Errorf("internal configuration error for Slack service")
+		}
+
+		testResult, err := integration.TestConnection(ctx, req.Credentials)
+		if err != nil {
+			log.Printf("ERROR [CredService] CreateCredential: Slack TestConnection system error for OrgID %s: %v", orgID, err)
+			return nil, fmt.Errorf("failed to test Slack connection: %w", err)
+		}
+
+		if !testResult.Success {
+			log.Printf("WARN [CredService] CreateCredential: Slack pre-save test failed for OrgID %s: %s", orgID, testResult.Message)
+			return nil, fmt.Errorf("%w: %s", ErrCredentialTestFailed, testResult.Message)
+		}
+
+		// Use fetched bot name if available
+		if botName, ok := testResult.Details["bot_name"].(string); ok && botName != "" {
+			finalCredentialName = botName
+			log.Printf("[CredService] CreateCredential: Slack test successful. Using fetched bot name: '%s' for OrgID %s", finalCredentialName, orgID)
+		} else {
+			log.Printf("WARN [CredService] CreateCredential: Slack test successful but failed to extract bot name for OrgID %s. Using provided/default name: '%s'", orgID, finalCredentialName)
 		}
 	}
 	// --- End Pre-Save Test ---
