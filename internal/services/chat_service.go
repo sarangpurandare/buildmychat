@@ -5,6 +5,7 @@ import (
 	"buildmychat-backend/internal/store"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"time"
 
@@ -60,29 +61,62 @@ func (s *ChatService) mapChatToResponse(ctx context.Context, dbChat *models.Chat
 
 // CreateChat creates a new chat associated with a chatbot.
 func (s *ChatService) CreateChat(ctx context.Context, orgID uuid.UUID, req models.CreateChatRequest) (*models.ChatResponse, error) {
-	// Validate required fields
+	// Debug logging
+	fmt.Printf("DEBUG - ChatService.CreateChat - orgID: %s, chatbotID: %s\n", orgID, req.ChatbotID)
+
+	// 1. Validate required ChatbotID
 	if req.ChatbotID == uuid.Nil {
 		return nil, fmt.Errorf("chatbot_id is required")
 	}
 
-	// If interface ID is not provided, we need to select a default one
-	interfaceID := uuid.Nil
-	if req.InterfaceID != nil {
-		interfaceID = *req.InterfaceID
-	} else {
-		// Get associated interfaces for this chatbot to find a default
-		mappings, err := s.store.GetChatbotMappings(ctx, req.ChatbotID, orgID)
-		if err != nil {
-			return nil, fmt.Errorf("failed to get chatbot mappings: %w", err)
+	// 2. Ensure the chatbot itself exists for the given organization.
+	// This call also implicitly validates orgID linkage to chatbotID.
+	chatbot, chatbotErr := s.chatbotService.GetChatbotByID(ctx, orgID, req.ChatbotID)
+	if chatbotErr != nil {
+		fmt.Printf("DEBUG - ChatService.CreateChat - Error getting chatbot: %v\n", chatbotErr)
+		if errors.Is(chatbotErr, store.ErrNotFound) {
+			return nil, fmt.Errorf("chatbot with ID %s not found for organization %s", req.ChatbotID, orgID)
 		}
-
-		// Use the first interface if available
-		if len(mappings.Interfaces) > 0 {
-			interfaceID = mappings.Interfaces[0].ID
-		} else {
-			return nil, fmt.Errorf("chatbot has no associated interfaces and none was provided")
-		}
+		return nil, fmt.Errorf("failed to verify chatbot (ID: %s) existence: %w", req.ChatbotID, chatbotErr)
 	}
+	fmt.Printf("DEBUG - ChatService.CreateChat - Found chatbot: %s (OrgID: %s)\n", chatbot.Name, chatbot.OrganizationID)
+
+	var determinedInterfaceID uuid.UUID // Defaults to uuid.Nil. This will be stored if no specific interface is linked.
+
+	if req.InterfaceID != nil { // An interface_id key was present in the request.
+		potentialInterfaceID := *req.InterfaceID
+
+		if potentialInterfaceID != uuid.Nil { // A specific, non-nil interface ID was provided. Validate it.
+			mappings, err := s.store.GetChatbotMappings(ctx, req.ChatbotID, orgID)
+			if err != nil {
+				if errors.Is(err, store.ErrNotFound) { // Chatbot exists but has no mappings.
+					return nil, fmt.Errorf("chatbot (ID: %s) has no associated interfaces, so provided interface_id %s cannot be validated as linked", req.ChatbotID, potentialInterfaceID)
+				}
+				return nil, fmt.Errorf("failed to retrieve mappings for chatbot (ID: %s) to validate provided interface_id %s: %w", req.ChatbotID, potentialInterfaceID, err)
+			}
+
+			found := false
+			// Check if mappings is nil before trying to iterate (though GetChatbotMappings should ideally not return (nil, nil))
+			if mappings != nil && mappings.Interfaces != nil {
+				for _, ifaceNode := range mappings.Interfaces {
+					if ifaceNode.ID == potentialInterfaceID {
+						// Additionally, ensure the interface node itself is active if your model supports IsActive for nodes.
+						// For now, just matching ID is sufficient based on current structure.
+						found = true
+						break
+					}
+				}
+			}
+
+			if !found {
+				return nil, fmt.Errorf("provided interface_id %s is not valid or not actively associated with chatbot %s", potentialInterfaceID, req.ChatbotID)
+			}
+			determinedInterfaceID = potentialInterfaceID // Validation passed, use this specific ID.
+		}
+		// If potentialInterfaceID was uuid.Nil (client sent "0000..."),
+		// determinedInterfaceID remains its default uuid.Nil, signifying no specific interface.
+	}
+	// If req.InterfaceID was nil (key not in JSON), determinedInterfaceID also remains its default uuid.Nil.
 
 	// Create initial messages
 	messages := []models.ChatMessage{
@@ -123,7 +157,7 @@ func (s *ChatService) CreateChat(ctx context.Context, orgID uuid.UUID, req model
 		ID:             uuid.New(), // Generate a new UUID
 		ChatbotID:      req.ChatbotID,
 		OrganizationID: orgID,
-		InterfaceID:    interfaceID,
+		InterfaceID:    determinedInterfaceID,
 		ExternalChatID: externalChatID,
 		ChatData:       messagesJSON,
 		Status:         "ACTIVE",
@@ -134,7 +168,7 @@ func (s *ChatService) CreateChat(ctx context.Context, orgID uuid.UUID, req model
 		ID:             dbChat.ID,
 		OrganizationID: orgID,
 		ChatbotID:      req.ChatbotID,
-		InterfaceID:    interfaceID,
+		InterfaceID:    determinedInterfaceID,
 		ExternalChatID: externalChatID,
 		ChatData:       messagesJSON,
 	}
@@ -345,4 +379,10 @@ func (s *ChatService) UpdateChatFeedback(ctx context.Context, orgID, chatID uuid
 		return fmt.Errorf("failed to update chat feedback: %w", err)
 	}
 	return nil
+}
+
+// GetChatbotService returns the ChatbotService instance used by this ChatService.
+// This is mainly for debugging purposes.
+func (s *ChatService) GetChatbotService() *ChatbotService {
+	return s.chatbotService
 }

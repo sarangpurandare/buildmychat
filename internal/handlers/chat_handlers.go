@@ -3,6 +3,7 @@ package handlers
 import (
 	"buildmychat-backend/internal/models"
 	"buildmychat-backend/internal/services"
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -28,10 +29,14 @@ func NewChatHandlers(chatService *services.ChatService) *ChatHandlers {
 func (h *ChatHandlers) HandleCreateChat(w http.ResponseWriter, r *http.Request) {
 	// Extract organization ID from context
 	orgID, err := getOrgIDFromContext(r.Context())
+	fmt.Println("DEBUG - HandleCreateChat - orgID from context:", orgID)
 	if err != nil {
 		respondWithError(w, http.StatusUnauthorized, "Unauthorized")
 		return
 	}
+
+	// DEBUG: List all chatbots for this organization
+	h.debugListAllChatbotsForOrg(r.Context(), orgID)
 
 	// Parse request body
 	var req models.CreateChatRequest
@@ -40,9 +45,17 @@ func (h *ChatHandlers) HandleCreateChat(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
+	fmt.Println("DEBUG - HandleCreateChat - request ChatbotID:", req.ChatbotID)
+	if req.InterfaceID != nil {
+		fmt.Println("DEBUG - HandleCreateChat - request InterfaceID:", *req.InterfaceID)
+	} else {
+		fmt.Println("DEBUG - HandleCreateChat - request InterfaceID: nil")
+	}
+
 	// Call service to create chat
 	chat, err := h.chatService.CreateChat(r.Context(), orgID, req)
 	if err != nil {
+		fmt.Println("DEBUG - HandleCreateChat - Error:", err)
 		respondWithError(w, http.StatusInternalServerError, "Failed to create chat: "+err.Error())
 		return
 	}
@@ -205,4 +218,40 @@ func (h *ChatHandlers) HandleListChats(w http.ResponseWriter, r *http.Request) {
 
 	// Respond with chats
 	respondWithJSON(w, http.StatusOK, chats)
+}
+
+func (h *ChatHandlers) debugListAllChatbotsForOrg(ctx context.Context, orgID uuid.UUID) {
+	// Try to access chatbot service through chat service
+	chatbotService := h.chatService.GetChatbotService()
+	if chatbotService == nil {
+		fmt.Println("DEBUG - Cannot debug list chatbots: ChatbotService not accessible")
+		return
+	}
+
+	response, err := chatbotService.ListChatbots(ctx, orgID)
+	if err != nil {
+		fmt.Printf("DEBUG - Error listing chatbots for orgID %s: %v\n", orgID, err)
+		return
+	}
+
+	// Print information about each chatbot
+	fmt.Printf("DEBUG - Found %d chatbots for organization %s:\n", len(response.Chatbots), orgID)
+	for i, chatbot := range response.Chatbots {
+		fmt.Printf("  %d. ID: %s, Name: %s, OrgID: %s\n",
+			i+1, chatbot.ID, chatbot.Name, chatbot.OrganizationID)
+
+		// Print interfaces if any
+		if len(chatbot.Interfaces) > 0 {
+			fmt.Printf("     Interfaces (%d):\n", len(chatbot.Interfaces))
+			for j, iface := range chatbot.Interfaces {
+				fmt.Printf("       %d. ID: %s, Name: %s\n", j+1, iface.ID, iface.Name)
+			}
+		} else {
+			fmt.Println("     No interfaces")
+		}
+	}
+
+	if len(response.Chatbots) == 0 {
+		fmt.Println("DEBUG - No chatbots found for this organization")
+	}
 }

@@ -3,6 +3,7 @@ package services
 import (
 	"buildmychat-backend/internal/models"
 	"buildmychat-backend/internal/store"
+	"buildmychat-backend/internal/store/postgres"
 	"context"
 	"fmt" // Import fmt
 
@@ -75,13 +76,29 @@ func (s *ChatbotService) CreateChatbot(ctx context.Context, orgID uuid.UUID, req
 
 // GetChatbotByID retrieves a specific chatbot by its ID for a given organization.
 func (s *ChatbotService) GetChatbotByID(ctx context.Context, orgID, chatbotID uuid.UUID) (*models.ChatbotResponse, error) {
+	fmt.Printf("DEBUG - ChatbotService.GetChatbotByID - Looking up chatbotID: %s for orgID: %s\n", chatbotID, orgID)
+
 	dbChatbot, err := s.store.GetChatbotByID(ctx, chatbotID, orgID)
 	if err != nil {
+		fmt.Printf("DEBUG - ChatbotService.GetChatbotByID - Error from store: %v\n", err)
+
+		// If not found, check if it exists but belongs to a different org (debug only)
 		if err == store.ErrNotFound {
+			// Access the PostgresStore to call our debug method
+			if pgStore, ok := s.store.(*postgres.PostgresStore); ok {
+				directChatbot, directErr := pgStore.DEBUG_GetChatbotByIDDirectly(ctx, chatbotID)
+				if directErr == nil {
+					// Chatbot exists but for a different org
+					fmt.Printf("DEBUG - MISMATCH - Chatbot exists but belongs to orgID %s, not requested orgID %s\n",
+						directChatbot.OrganizationID, orgID)
+				}
+			}
 			return nil, err // Propagate ErrNotFound
 		}
 		return nil, fmt.Errorf("failed to get chatbot from store: %w", err)
 	}
+
+	fmt.Printf("DEBUG - ChatbotService.GetChatbotByID - Found chatbot: %s (OrgID: %s)\n", dbChatbot.Name, dbChatbot.OrganizationID)
 
 	resp, err := s.mapChatbotWithMappingsToResponse(ctx, dbChatbot)
 	if err != nil {

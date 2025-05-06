@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"buildmychat-backend/internal/auth"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -9,13 +10,12 @@ import (
 	"github.com/google/uuid"
 )
 
-// getOrgIDFromContext extracts the organization ID from the context.
+// getOrgIDFromContext retrieves the organization ID from the context
+// using the helper function from the auth package.
 func getOrgIDFromContext(ctx context.Context) (uuid.UUID, error) {
-	// In a real implementation, this would get the organization ID from JWT claims
-	// For now, we'll use a placeholder method that returns a fixed org ID for testing
-	orgID, ok := ctx.Value("organization_id").(uuid.UUID)
+	orgID, ok := auth.GetOrgIDFromContext(ctx)
 	if !ok {
-		return uuid.Nil, fmt.Errorf("organization ID not found in context")
+		return uuid.Nil, fmt.Errorf("organization ID not found in context or not a UUID")
 	}
 	return orgID, nil
 }

@@ -14,16 +14,6 @@ import (
 	"github.com/google/uuid"
 )
 
-// --- Context Keys ---
-
-// contextKey is a custom type used for context keys to avoid collisions.
-type contextKey string
-
-const (
-	UserIDKey contextKey = "userID"
-	OrgIDKey  contextKey = "orgID"
-)
-
 // --- JWT Middleware ---
 
 // JwtAuthMiddleware verifies the JWT token from the Authorization header.
@@ -93,20 +83,4 @@ func JwtAuthMiddleware(jwtSecret string) func(http.Handler) http.Handler {
 			next.ServeHTTP(w, r.WithContext(ctx))
 		})
 	}
-}
-
-// --- Context Helper Functions ---
-
-// GetUserIDFromContext retrieves the UserID (uuid.UUID) from the request context.
-// Returns the ID and true if found, otherwise uuid.Nil and false.
-func GetUserIDFromContext(ctx context.Context) (uuid.UUID, bool) {
-	userID, ok := ctx.Value(UserIDKey).(uuid.UUID)
-	return userID, ok
-}
-
-// GetOrgIDFromContext retrieves the OrgID (uuid.UUID) from the request context.
-// Returns the ID and true if found, otherwise uuid.Nil and false.
-func GetOrgIDFromContext(ctx context.Context) (uuid.UUID, bool) {
-	orgID, ok := ctx.Value(OrgIDKey).(uuid.UUID)
-	return orgID, ok
 }

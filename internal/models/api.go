@@ -202,7 +202,17 @@ type ChatMessage struct {
 	SentBy    string           `json:"sent_by"`            // "user", "assistant", "system" (duplicates Role for compatibility)
 	Hide      int              `json:"hide"`               // 0 = show, 1 = hide
 	Metadata  *json.RawMessage `json:"metadata,omitempty"` // Optional additional data
+	// Media     []MediaAttachment `json:"media,omitempty"`    // Reverted: Optional media attachments
 }
+
+// MediaAttachment represents a media file attached to a message
+/* Reverted: MediaAttachment struct
+type MediaAttachment struct {
+	Type string `json:"type"` // e.g., "image", "video", "audio", "document"
+	URL  string `json:"url"`  // URL to the media file
+	// Additional fields could include: title, thumbnail_url, file_size, etc.
+}
+*/
 
 // CreateChatRequest defines the payload for creating a new chat.
 type CreateChatRequest struct {
@@ -210,6 +220,7 @@ type CreateChatRequest struct {
 	InterfaceID    *uuid.UUID `json:"interface_id,omitempty"`     // Optional, for API-created chats
 	ExternalChatID *string    `json:"external_chat_id,omitempty"` // Optional, auto-generated if not provided
 	InitialMessage *string    `json:"initial_message,omitempty"`  // Optional first user message
+	// InitialMedia   []MediaAttachment `json:"initial_media,omitempty"`    // Reverted: Optional media attachments for initial message
 }
 
 // ChatResponse defines the standard representation of a chat in API responses.
@@ -245,10 +256,12 @@ type UpdateChatFeedbackRequest struct {
 // AddMessageAsUserRequest defines the payload for adding a user message to a chat.
 type AddMessageAsUserRequest struct {
 	Message string `json:"message"` // The user message to add
+	// Media   []MediaAttachment `json:"media,omitempty"` // Reverted: Optional media attachments
 }
 
 // AddMessageAsAssistantRequest defines the payload for adding an assistant message to a chat.
 type AddMessageAsAssistantRequest struct {
 	Message  string           `json:"message"`            // The assistant message content
 	Metadata *json.RawMessage `json:"metadata,omitempty"` // Optional metadata for the message
+	// Media    []MediaAttachment `json:"media,omitempty"`    // Reverted: Optional media attachments
 }

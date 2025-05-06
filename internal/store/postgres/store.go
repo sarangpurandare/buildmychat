@@ -170,6 +170,9 @@ WHERE id = $1 AND organization_id = $2;
 `
 
 func (s *PostgresStore) GetChatbotByID(ctx context.Context, id uuid.UUID, organizationID uuid.UUID) (models.Chatbot, error) {
+	fmt.Printf("DEBUG - PostgresStore.GetChatbotByID - Query: %s\nParams: id=%s, organizationID=%s\n",
+		getChatbotByID, id, organizationID)
+
 	row := s.db.QueryRow(ctx, getChatbotByID, id, organizationID)
 	var i models.Chatbot
 	err := row.Scan(
@@ -186,10 +189,17 @@ func (s *PostgresStore) GetChatbotByID(ctx context.Context, id uuid.UUID, organi
 	)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
+			fmt.Printf("DEBUG - PostgresStore.GetChatbotByID - Not found: id=%s, organizationID=%s\n",
+				id, organizationID)
 			return models.Chatbot{}, store.ErrNotFound
 		}
+		fmt.Printf("DEBUG - PostgresStore.GetChatbotByID - Error scanning: %v\n", err)
 		return models.Chatbot{}, fmt.Errorf("error scanning chatbot: %w", err)
 	}
+
+	fmt.Printf("DEBUG - PostgresStore.GetChatbotByID - Found chatbot: %s (ID: %s, OrgID: %s)\n",
+		i.Name, i.ID, i.OrganizationID)
+
 	return i, nil
 }
 
@@ -592,11 +602,12 @@ func (s *PostgresStore) CreateChat(ctx context.Context, arg store.CreateChatPara
 		id = uuid.New()
 	}
 
-	// Generate external chat ID if not provided
+	// Handle external_chat_id
+	// If ExternalChatID is empty or not provided, we'll store NULL in the database
+	// instead of generating a random UUID. This allows us to track which chats
+	// originated from external sources vs. internal ones.
 	externalChatID := arg.ExternalChatID
-	if externalChatID == "" {
-		externalChatID = uuid.New().String()
-	}
+	// The previous code that generated a random UUID is now removed
 
 	// Verify the chatbot exists and belongs to the organization
 	_, err := s.GetChatbotByID(ctx, arg.ChatbotID, arg.OrganizationID)
@@ -604,11 +615,15 @@ func (s *PostgresStore) CreateChat(ctx context.Context, arg store.CreateChatPara
 		return nil, fmt.Errorf("failed to verify chatbot: %w", err)
 	}
 
-	// Verify the interface exists and belongs to the organization
-	_, err = s.GetInterfaceByID(ctx, arg.InterfaceID, arg.OrganizationID)
-	if err != nil {
-		return nil, fmt.Errorf("failed to verify interface: %w", err)
+	// Verify the interface exists and belongs to the organization, ONLY IF an InterfaceID is provided.
+	if arg.InterfaceID != uuid.Nil {
+		_, err = s.GetInterfaceByID(ctx, arg.InterfaceID, arg.OrganizationID)
+		if err != nil {
+			// If a specific interface ID was given but not found (or other error), it's a problem.
+			return nil, fmt.Errorf("failed to verify provided interface_id %s: %w", arg.InterfaceID, err)
+		}
 	}
+	// If arg.InterfaceID is uuid.Nil, we proceed without verification, and uuid.Nil will be stored in the DB.
 
 	// Use the provided chat data
 	var chatData []byte
@@ -907,4 +922,41 @@ func (s *PostgresStore) UpdateChatFeedback(ctx context.Context, chatID uuid.UUID
 	}
 
 	return nil
+}
+
+// DEBUG ONLY: Utility function to directly get a chatbot without org restriction
+func (s *PostgresStore) DEBUG_GetChatbotByIDDirectly(ctx context.Context, id uuid.UUID) (models.Chatbot, error) {
+	const query = `
+		SELECT id, organization_id, name, system_prompt, is_active, chat_count, llm_model, configuration, created_at, updated_at
+		FROM chatbots
+		WHERE id = $1;
+	`
+	fmt.Printf("DEBUG UTILITY - Direct chatbot lookup by ID=%s without org restriction\n", id)
+
+	row := s.db.QueryRow(ctx, query, id)
+	var i models.Chatbot
+	err := row.Scan(
+		&i.ID,
+		&i.OrganizationID,
+		&i.Name,
+		&i.SystemPrompt,
+		&i.IsActive,
+		&i.ChatCount,
+		&i.LLMModel,
+		&i.Configuration,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			fmt.Printf("DEBUG UTILITY - Chatbot not found for direct ID lookup: %s\n", id)
+			return models.Chatbot{}, store.ErrNotFound
+		}
+		return models.Chatbot{}, fmt.Errorf("error scanning chatbot: %w", err)
+	}
+
+	fmt.Printf("DEBUG UTILITY - Found chatbot directly: %s (ID: %s, OrgID: %s)\n",
+		i.Name, i.ID, i.OrganizationID)
+
+	return i, nil
 }
