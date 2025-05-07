@@ -22,11 +22,15 @@ import (
 var _ store.Store = (*PostgresStore)(nil)
 
 type PostgresStore struct {
-	db *pgxpool.Pool
+	db           *pgxpool.Pool
+	debugLogging bool // Added debugLogging field
 }
 
 func NewPostgresStore(db *pgxpool.Pool) *PostgresStore {
-	return &PostgresStore{db: db}
+	return &PostgresStore{
+		db:           db,
+		debugLogging: true, // Enable by default
+	}
 }
 
 // GetUserByEmail retrieves a user by their email address.
@@ -588,11 +592,11 @@ func (s *PostgresStore) GetChatbotMappings(ctx context.Context, chatbotID, orgID
 
 const createChat = `-- name: CreateChat :one
 INSERT INTO chats (
-    id, organization_id, chatbot_id, interface_id, external_chat_id, chat_data, status
+    id, organization_id, chatbot_id, interface_id, external_chat_id, chat_data, status, configuration
 ) VALUES (
-    $1, $2, $3, $4, $5, $6, $7
+    $1, $2, $3, $4, $5, $6, $7, $8
 )
-RETURNING id, chatbot_id, organization_id, interface_id, external_chat_id, chat_data, feedback, status, created_at, updated_at;
+RETURNING id, chatbot_id, organization_id, interface_id, external_chat_id, chat_data, feedback, status, configuration, created_at, updated_at;
 `
 
 func (s *PostgresStore) CreateChat(ctx context.Context, arg store.CreateChatParams) (*models.Chat, error) {
@@ -634,6 +638,14 @@ func (s *PostgresStore) CreateChat(ctx context.Context, arg store.CreateChatPara
 		chatData = []byte("[]")
 	}
 
+	// Use the provided configuration data or default to empty object
+	var configData []byte
+	if arg.Configuration != nil {
+		configData = arg.Configuration
+	} else {
+		configData = []byte("{}")
+	}
+
 	// Default status is ACTIVE
 	status := "ACTIVE"
 
@@ -645,6 +657,7 @@ func (s *PostgresStore) CreateChat(ctx context.Context, arg store.CreateChatPara
 		externalChatID,
 		chatData,
 		status,
+		configData,
 	)
 
 	var chat models.Chat
@@ -657,6 +670,7 @@ func (s *PostgresStore) CreateChat(ctx context.Context, arg store.CreateChatPara
 		&chat.ChatData,
 		&chat.Feedback,
 		&chat.Status,
+		&chat.Configuration,
 		&chat.CreatedAt,
 		&chat.UpdatedAt,
 	)
@@ -668,7 +682,7 @@ func (s *PostgresStore) CreateChat(ctx context.Context, arg store.CreateChatPara
 }
 
 const getChatByID = `-- name: GetChatByID :one
-SELECT id, chatbot_id, organization_id, interface_id, external_chat_id, chat_data, feedback, status, created_at, updated_at
+SELECT id, chatbot_id, organization_id, interface_id, external_chat_id, chat_data, feedback, status, configuration, created_at, updated_at
 FROM chats
 WHERE id = $1 AND organization_id = $2;
 `
@@ -686,6 +700,7 @@ func (s *PostgresStore) GetChatByID(ctx context.Context, id uuid.UUID, orgID uui
 		&chat.ChatData,
 		&chat.Feedback,
 		&chat.Status,
+		&chat.Configuration,
 		&chat.CreatedAt,
 		&chat.UpdatedAt,
 	)
@@ -700,7 +715,7 @@ func (s *PostgresStore) GetChatByID(ctx context.Context, id uuid.UUID, orgID uui
 }
 
 const getChatByExternalID = `-- name: GetChatByExternalID :one
-SELECT id, chatbot_id, organization_id, interface_id, external_chat_id, chat_data, feedback, status, created_at, updated_at
+SELECT id, chatbot_id, organization_id, interface_id, external_chat_id, chat_data, feedback, status, configuration, created_at, updated_at
 FROM chats
 WHERE external_chat_id = $1 AND interface_id = $2 AND organization_id = $3;
 `
@@ -718,6 +733,7 @@ func (s *PostgresStore) GetChatByExternalID(ctx context.Context, externalID stri
 		&chat.ChatData,
 		&chat.Feedback,
 		&chat.Status,
+		&chat.Configuration,
 		&chat.CreatedAt,
 		&chat.UpdatedAt,
 	)
@@ -732,7 +748,7 @@ func (s *PostgresStore) GetChatByExternalID(ctx context.Context, externalID stri
 }
 
 const listChatsByOrg = `-- name: ListChatsByOrg :many
-SELECT id, chatbot_id, organization_id, interface_id, external_chat_id, chat_data, feedback, status, created_at, updated_at
+SELECT id, chatbot_id, organization_id, interface_id, external_chat_id, chat_data, feedback, status, configuration, created_at, updated_at
 FROM chats
 WHERE organization_id = $1
 ORDER BY created_at DESC
@@ -758,6 +774,7 @@ func (s *PostgresStore) ListChatsByOrg(ctx context.Context, orgID uuid.UUID, lim
 			&chat.ChatData,
 			&chat.Feedback,
 			&chat.Status,
+			&chat.Configuration,
 			&chat.CreatedAt,
 			&chat.UpdatedAt,
 		); err != nil {
@@ -774,7 +791,7 @@ func (s *PostgresStore) ListChatsByOrg(ctx context.Context, orgID uuid.UUID, lim
 }
 
 const listChatsByChatbot = `-- name: ListChatsByChatbot :many
-SELECT id, chatbot_id, organization_id, interface_id, external_chat_id, chat_data, feedback, status, created_at, updated_at
+SELECT id, chatbot_id, organization_id, interface_id, external_chat_id, chat_data, feedback, status, configuration, created_at, updated_at
 FROM chats
 WHERE chatbot_id = $1 AND organization_id = $2
 ORDER BY created_at DESC
@@ -800,6 +817,7 @@ func (s *PostgresStore) ListChatsByChatbot(ctx context.Context, chatbotID, orgID
 			&chat.ChatData,
 			&chat.Feedback,
 			&chat.Status,
+			&chat.Configuration,
 			&chat.CreatedAt,
 			&chat.UpdatedAt,
 		); err != nil {
@@ -924,6 +942,26 @@ func (s *PostgresStore) UpdateChatFeedback(ctx context.Context, chatID uuid.UUID
 	return nil
 }
 
+// UpdateChatConfiguration updates the configuration of a chat.
+func (s *PostgresStore) UpdateChatConfiguration(ctx context.Context, chatID uuid.UUID, configuration []byte, orgID uuid.UUID) error {
+	query := `
+		UPDATE chats
+		SET configuration = $1, updated_at = NOW()
+		WHERE id = $2 AND organization_id = $3;
+	`
+
+	tag, err := s.db.Exec(ctx, query, configuration, chatID, orgID)
+	if err != nil {
+		return fmt.Errorf("failed to update chat configuration: %w", err)
+	}
+
+	if tag.RowsAffected() == 0 {
+		return store.ErrNotFound
+	}
+
+	return nil
+}
+
 // DEBUG ONLY: Utility function to directly get a chatbot without org restriction
 func (s *PostgresStore) DEBUG_GetChatbotByIDDirectly(ctx context.Context, id uuid.UUID) (models.Chatbot, error) {
 	const query = `
@@ -959,4 +997,45 @@ func (s *PostgresStore) DEBUG_GetChatbotByIDDirectly(ctx context.Context, id uui
 		i.Name, i.ID, i.OrganizationID)
 
 	return i, nil
+}
+
+// GetChatbotByIDOnly retrieves a chatbot by ID without requiring an organization ID.
+// This is useful for scenarios like webhook handlers where the organization context isn't available.
+func (s *PostgresStore) GetChatbotByIDOnly(ctx context.Context, chatbotID uuid.UUID) (models.Chatbot, error) {
+	query := `-- name: GetChatbotByIDOnly :one
+SELECT id, organization_id, name, system_prompt, is_active, chat_count, llm_model, configuration, created_at, updated_at
+FROM chatbots
+WHERE id = $1;`
+
+	var chatbot models.Chatbot
+
+	if s.debugLogging {
+		log.Printf("DEBUG - PostgresStore.GetChatbotByIDOnly - Query: %s\n\nParams: id=%s", query, chatbotID)
+	}
+
+	row := s.db.QueryRow(ctx, query, chatbotID)
+	err := row.Scan(
+		&chatbot.ID,
+		&chatbot.OrganizationID,
+		&chatbot.Name,
+		&chatbot.SystemPrompt,
+		&chatbot.IsActive,
+		&chatbot.ChatCount,
+		&chatbot.LLMModel,
+		&chatbot.Configuration,
+		&chatbot.CreatedAt,
+		&chatbot.UpdatedAt,
+	)
+
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			if s.debugLogging {
+				log.Printf("DEBUG - PostgresStore.GetChatbotByIDOnly - Not found: id=%s", chatbotID)
+			}
+			return chatbot, store.ErrNotFound
+		}
+		return chatbot, fmt.Errorf("failed to get chatbot by ID only: %w", err)
+	}
+
+	return chatbot, nil
 }

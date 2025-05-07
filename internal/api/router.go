@@ -15,12 +15,13 @@ import (
 // RouterDependencies holds all the dependencies required by the router setup,
 // primarily handlers and configuration.
 type RouterDependencies struct {
-	AuthHandler        *handlers.AuthHandler
-	CredentialsHandler *handlers.CredentialsHandler
-	KBHandler          *handlers.KBHandler
-	InterfaceHandler   *handlers.InterfaceHandler
-	ChatbotHandler     *handlers.ChatbotHandlers
-	ChatHandler        *handlers.ChatHandlers
+	AuthHandler         *handlers.AuthHandler
+	CredentialsHandler  *handlers.CredentialsHandler
+	KBHandler           *handlers.KBHandler
+	InterfaceHandler    *handlers.InterfaceHandler
+	ChatbotHandler      *handlers.ChatbotHandlers
+	ChatHandler         *handlers.ChatHandlers
+	SlackWebhookHandler *handlers.SlackWebhookHandlers
 	// OrgHandler        *handlers.OrgHandler
 	// NodeHandler       *handlers.NodeHandler
 	// WebhookHandler    *handlers.WebhookHandler
@@ -64,10 +65,16 @@ func NewRouter(deps RouterDependencies) *chi.Mux {
 		r.Post("/login", deps.AuthHandler.HandleLogin)
 	})
 
-	// Placeholder for public webhooks (Slack verification happens within handler)
-	// if deps.WebhookHandler != nil {
-	// 	 r.Post("/v1/webhooks/slack/events", deps.WebhookHandler.HandleSlackEvents)
-	// }
+	// --- Public Slack Event Webhook ---
+	// This needs to be public for Slack to send events (including initial URL verification).
+	// Signature verification within the handler will secure it.
+	if deps.SlackWebhookHandler != nil {
+		r.Route("/slack-events", func(r chi.Router) {
+			r.Post("/{chatbotID}", deps.SlackWebhookHandler.HandleSlackEvent)
+		})
+	} else {
+		log.Println("WARN: SlackWebhookHandler dependency is nil, skipping /v1/slack-events routes.")
+	}
 
 	// --- Authenticated Routes (JWT Required) ---
 	r.Route("/v1", func(r chi.Router) {

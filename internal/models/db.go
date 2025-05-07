@@ -87,9 +87,10 @@ type Chat struct {
 	OrganizationID uuid.UUID       `db:"organization_id"`
 	InterfaceID    uuid.UUID       `db:"interface_id"`
 	ExternalChatID string          `db:"external_chat_id"`
-	ChatData       json.RawMessage `db:"chat_data"` // Stored as JSONB
-	Feedback       *int8           `db:"feedback"`  // Can be NULL, -1, 0, or 1
-	Status         string          `db:"status"`    // ACTIVE, PROCESSING, COMPLETED, ERROR
+	ChatData       json.RawMessage `db:"chat_data"`     // Stored as JSONB
+	Feedback       *int8           `db:"feedback"`      // Can be NULL, -1, 0, or 1
+	Status         string          `db:"status"`        // ACTIVE, PROCESSING, COMPLETED, ERROR
+	Configuration  json.RawMessage `db:"configuration"` // Stored as JSONB
 	CreatedAt      time.Time       `db:"created_at"`
 	UpdatedAt      time.Time       `db:"updated_at"`
 }

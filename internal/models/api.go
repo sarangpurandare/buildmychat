@@ -216,10 +216,11 @@ type MediaAttachment struct {
 
 // CreateChatRequest defines the payload for creating a new chat.
 type CreateChatRequest struct {
-	ChatbotID      uuid.UUID  `json:"chatbot_id"`
-	InterfaceID    *uuid.UUID `json:"interface_id,omitempty"`     // Optional, for API-created chats
-	ExternalChatID *string    `json:"external_chat_id,omitempty"` // Optional, auto-generated if not provided
-	InitialMessage *string    `json:"initial_message,omitempty"`  // Optional first user message
+	ChatbotID      uuid.UUID        `json:"chatbot_id"`
+	InterfaceID    *uuid.UUID       `json:"interface_id,omitempty"`     // Optional, for API-created chats
+	ExternalChatID *string          `json:"external_chat_id,omitempty"` // Optional, auto-generated if not provided
+	InitialMessage *string          `json:"initial_message,omitempty"`  // Optional first user message
+	Configuration  *json.RawMessage `json:"configuration,omitempty"`    // Optional configuration JSON
 	// InitialMedia   []MediaAttachment `json:"initial_media,omitempty"`    // Reverted: Optional media attachments for initial message
 }
 
@@ -233,7 +234,8 @@ type ChatResponse struct {
 	Chat           []ChatMessage    `json:"chat"` // Changed from Messages to Chat, as required
 	Feedback       *int8            `json:"feedback,omitempty"`
 	Status         string           `json:"status"`
-	Chatbot        *ChatbotResponse `json:"chatbot,omitempty"` // For detail views, include related chatbot
+	Configuration  *json.RawMessage `json:"configuration,omitempty"` // Configuration data for this chat
+	Chatbot        *ChatbotResponse `json:"chatbot,omitempty"`       // For detail views, include related chatbot
 	CreatedAt      time.Time        `json:"created_at"`
 	UpdatedAt      time.Time        `json:"updated_at"`
 }

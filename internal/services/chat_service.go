@@ -1,28 +1,34 @@
 package services
 
 import (
+	"buildmychat-backend/internal/integrations/slack"
 	"buildmychat-backend/internal/models"
 	"buildmychat-backend/internal/store"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
+
+	"bytes"
 
 	"github.com/google/uuid"
 )
 
 // ChatService handles chat-related business logic.
 type ChatService struct {
-	store          store.Store
-	chatbotService *ChatbotService
+	store             store.Store
+	chatbotService    *ChatbotService
+	credentialService CredentialsService
 }
 
 // NewChatService creates a new ChatService.
-func NewChatService(store store.Store, chatbotService *ChatbotService) *ChatService {
+func NewChatService(store store.Store, chatbotService *ChatbotService, credentialService CredentialsService) *ChatService {
 	return &ChatService{
-		store:          store,
-		chatbotService: chatbotService,
+		store:             store,
+		chatbotService:    chatbotService,
+		credentialService: credentialService,
 	}
 }
 
@@ -34,6 +40,12 @@ func (s *ChatService) mapChatToResponse(ctx context.Context, dbChat *models.Chat
 		return nil, fmt.Errorf("failed to parse chat data: %w", err)
 	}
 
+	// Convert configuration to pointer for JSON encoding
+	var configPtr *json.RawMessage
+	if len(dbChat.Configuration) > 0 && !bytes.Equal(dbChat.Configuration, []byte("{}")) && !bytes.Equal(dbChat.Configuration, []byte("null")) {
+		configPtr = &dbChat.Configuration
+	}
+
 	resp := &models.ChatResponse{
 		ID:             dbChat.ID,
 		ChatbotID:      dbChat.ChatbotID,
@@ -43,6 +55,7 @@ func (s *ChatService) mapChatToResponse(ctx context.Context, dbChat *models.Chat
 		Chat:           messages,
 		Feedback:       dbChat.Feedback,
 		Status:         dbChat.Status,
+		Configuration:  configPtr,
 		CreatedAt:      dbChat.CreatedAt,
 		UpdatedAt:      dbChat.UpdatedAt,
 	}
@@ -152,6 +165,14 @@ func (s *ChatService) CreateChat(ctx context.Context, orgID uuid.UUID, req model
 		externalChatID = *req.ExternalChatID
 	}
 
+	// Prepare configuration JSON
+	var configJSON []byte
+	if req.Configuration != nil {
+		configJSON = *req.Configuration
+	} else {
+		configJSON = []byte("{}")
+	}
+
 	// Create the chat in the database
 	dbChat := &models.Chat{
 		ID:             uuid.New(), // Generate a new UUID
@@ -161,6 +182,7 @@ func (s *ChatService) CreateChat(ctx context.Context, orgID uuid.UUID, req model
 		ExternalChatID: externalChatID,
 		ChatData:       messagesJSON,
 		Status:         "ACTIVE",
+		Configuration:  configJSON,
 	}
 
 	// Create the chat in the database
@@ -171,6 +193,7 @@ func (s *ChatService) CreateChat(ctx context.Context, orgID uuid.UUID, req model
 		InterfaceID:    determinedInterfaceID,
 		ExternalChatID: externalChatID,
 		ChatData:       messagesJSON,
+		Configuration:  configJSON,
 	}
 
 	createdChat, err := s.store.CreateChat(ctx, params)
@@ -331,9 +354,10 @@ func (s *ChatService) AddMessageToChat(ctx context.Context, orgID, chatID uuid.U
 }
 
 // AddAssistantMessageToChat adds an assistant message to a chat and updates its status to ACTIVE.
+// If the chat has an associated interface, it will also send the message to that interface.
 func (s *ChatService) AddAssistantMessageToChat(ctx context.Context, orgID, chatID uuid.UUID, message string, metadata *json.RawMessage) (*models.ChatResponse, error) {
 	// First get the chat to ensure it exists and belongs to the organization
-	_, err := s.store.GetChatByID(ctx, chatID, orgID)
+	chat, err := s.store.GetChatByID(ctx, chatID, orgID)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get chat: %w", err)
 	}
@@ -358,6 +382,14 @@ func (s *ChatService) AddAssistantMessageToChat(ctx context.Context, orgID, chat
 		return nil, fmt.Errorf("failed to update chat status: %w", err)
 	}
 
+	// Check if this chat has an associated interface - if so, send the message to that interface
+	if chat.InterfaceID != uuid.Nil {
+		if err := s.sendMessageToInterface(ctx, chat, message); err != nil {
+			// Log the error but don't fail the entire operation
+			fmt.Printf("WARNING - AddAssistantMessageToChat - Failed to send message to interface: %v\n", err)
+		}
+	}
+
 	// Get the updated chat to return
 	updatedChat, err := s.store.GetChatByID(ctx, chatID, orgID)
 	if err != nil {
@@ -373,6 +405,79 @@ func (s *ChatService) AddAssistantMessageToChat(ctx context.Context, orgID, chat
 	return resp, nil
 }
 
+// sendMessageToInterface sends a message to the appropriate interface based on the interface type.
+// Currently supports Slack interfaces.
+func (s *ChatService) sendMessageToInterface(ctx context.Context, chat *models.Chat, message string) error {
+	// Get the interface details to determine its type
+	iface, err := s.store.GetInterfaceByID(ctx, chat.InterfaceID, chat.OrganizationID)
+	if err != nil {
+		return fmt.Errorf("failed to get interface details: %w", err)
+	}
+
+	// Check the interface type and dispatch to the appropriate handler
+	switch iface.ServiceType {
+	case models.ServiceTypeSlack:
+		return s.sendMessageToSlack(ctx, chat, iface, message)
+	default:
+		return fmt.Errorf("unsupported interface type: %s", iface.ServiceType)
+	}
+}
+
+// sendMessageToSlack sends a message to a Slack channel.
+func (s *ChatService) sendMessageToSlack(ctx context.Context, chat *models.Chat, iface *models.Interface, message string) error {
+	// 1. Get the Slack credentials
+	if iface.CredentialID == uuid.Nil {
+		return fmt.Errorf("slack interface has no associated credential")
+	}
+
+	// Get the decrypted credentials using CredentialService
+	credential, err := s.credentialService.GetDecryptedCredential(ctx, iface.CredentialID, chat.OrganizationID)
+	if err != nil {
+		return fmt.Errorf("failed to get Slack credentials: %w", err)
+	}
+
+	// Extract the bot token from the decrypted credentials
+	var creds map[string]string
+	if err := json.Unmarshal(credential.DecryptedCredentials, &creds); err != nil {
+		return fmt.Errorf("failed to parse Slack credentials: %w", err)
+	}
+
+	botToken, ok := creds["bot_token"]
+	if !ok || botToken == "" {
+		return fmt.Errorf("invalid or missing Slack bot token in credentials")
+	}
+
+	// Extract channel ID from external_chat_id
+	if chat.ExternalChatID == "" {
+		return fmt.Errorf("chat has no external chat ID for Slack")
+	}
+
+	parts := strings.Split(chat.ExternalChatID, "_")
+	if len(parts) < 2 {
+		return fmt.Errorf("invalid external chat ID format: %s", chat.ExternalChatID)
+	}
+
+	channelID := parts[1] // channel_id is the second part
+
+	// Extract thread_ts from configuration if available
+	var threadTs string
+	if chat.Configuration != nil && len(chat.Configuration) > 0 {
+		var config map[string]string
+		if err := json.Unmarshal(chat.Configuration, &config); err == nil {
+			threadTs = config["thread_ts"]
+			if threadTs != "" {
+				fmt.Printf("INFO - ChatService.sendMessageToSlack - Using thread_ts '%s' from configuration\n", threadTs)
+			}
+		}
+	}
+
+	// Use the Slack integration to actually send the message
+	fmt.Printf("INFO - ChatService.sendMessageToSlack - Sending message to Slack channel %s\n", channelID)
+
+	// Import the slack integration package in the imports section
+	return slack.SendMessageToChannel(ctx, botToken, channelID, message, threadTs)
+}
+
 // UpdateChatFeedback updates the feedback for a chat.
 func (s *ChatService) UpdateChatFeedback(ctx context.Context, orgID, chatID uuid.UUID, feedback int8) error {
 	if err := s.store.UpdateChatFeedback(ctx, chatID, feedback, orgID); err != nil {
@@ -385,4 +490,134 @@ func (s *ChatService) UpdateChatFeedback(ctx context.Context, orgID, chatID uuid
 // This is mainly for debugging purposes.
 func (s *ChatService) GetChatbotService() *ChatbotService {
 	return s.chatbotService
+}
+
+// GetOrgIDForChatbot retrieves the organization ID for a given chatbotID.
+func (s *ChatService) GetOrgIDForChatbot(ctx context.Context, chatbotID uuid.UUID) (uuid.UUID, error) {
+	// Use GetChatbotByIDOnly which doesn't require an organization ID - better for webhook scenarios
+	chatbot, err := s.store.GetChatbotByIDOnly(ctx, chatbotID)
+	if err != nil {
+		// Corrected to use package-level store.ErrNotFound
+		if errors.Is(err, store.ErrNotFound) {
+			return uuid.Nil, fmt.Errorf("chatbot with ID %s not found: %w", chatbotID, err)
+		}
+		return uuid.Nil, fmt.Errorf("failed to get chatbot %s from store: %w", chatbotID, err)
+	}
+	// If err is nil, chatbot is considered valid. The check for store.ErrNotFound handles not found.
+
+	if chatbot.OrganizationID == uuid.Nil {
+		return uuid.Nil, fmt.Errorf("chatbot %s has a nil OrganizationID", chatbotID)
+	}
+	return chatbot.OrganizationID, nil
+}
+
+// FindOrCreateChatForExternalID finds a chat by its externalID and chatbotID,
+// or creates a new one if not found. The provided initialMessage is added to the
+// chat session (either to the existing one or as the first message in a new one).
+func (s *ChatService) FindOrCreateChatForExternalID(
+	ctx context.Context,
+	orgID uuid.UUID, // Organization ID, assumed to be validated by the caller
+	chatbotID uuid.UUID,
+	externalChatID string,
+	initialMessage models.Message, // The user's message from the external event
+	configuration json.RawMessage, // Optional configuration for the chat
+) (*models.Chat, error) {
+	// Attempt to find an existing chat
+	// Assuming GetChatByExternalID needs (ctx, externalID, interfaceID, orgID)
+	// Passing uuid.Nil for interfaceID as a placeholder. This needs proper handling.
+	existingChat, err := s.store.GetChatByExternalID(ctx, externalChatID, uuid.Nil /*TODO: interfaceID*/, orgID)
+
+	if err == nil && existingChat != nil {
+		fmt.Printf("DEBUG - ChatService.FindOrCreateChatForExternalID: Found existing chat ID %s for externalID %s. Adding message.\n", existingChat.ID, externalChatID)
+
+		// If configuration is provided, update the chat configuration
+		if len(configuration) > 0 && !bytes.Equal(configuration, []byte("{}")) && !bytes.Equal(configuration, []byte("null")) {
+			existingChat.Configuration = configuration
+			// Update the configuration in the database
+			err := s.store.UpdateChatConfiguration(ctx, existingChat.ID, configuration, existingChat.OrganizationID)
+			if err != nil {
+				fmt.Printf("WARNING - ChatService.FindOrCreateChatForExternalID: Failed to update chat configuration: %v\n", err)
+				// Continue processing even if this fails
+			} else {
+				fmt.Printf("DEBUG - ChatService.FindOrCreateChatForExternalID: Updated chat configuration for chat ID %s\n", existingChat.ID)
+			}
+		}
+
+		// AddMessageToChat expects string content and returns *models.ChatResponse.
+		// We pass initialMessage.Content and then re-fetch the *models.Chat.
+		_, addMsgErr := s.AddMessageToChat(ctx, existingChat.OrganizationID, existingChat.ID, initialMessage.Content)
+		if addMsgErr != nil {
+			return nil, fmt.Errorf("failed to add message (content) to existing chat %s for externalID %s: %w", existingChat.ID, externalChatID, addMsgErr)
+		}
+		// Re-fetch to get *models.Chat object as AddMessageToChat returns ChatResponse
+		updatedDbChat, getErr := s.store.GetChatByID(ctx, existingChat.ID, existingChat.OrganizationID)
+		if getErr != nil {
+			return nil, fmt.Errorf("failed to re-fetch chat %s after adding message: %w", existingChat.ID, getErr)
+		}
+		return updatedDbChat, nil
+	}
+
+	// Corrected to use package-level store.ErrNotFound
+	if !errors.Is(err, store.ErrNotFound) {
+		return nil, fmt.Errorf("error checking for existing chat with externalID %s: %w", externalChatID, err)
+	}
+
+	fmt.Printf("DEBUG - ChatService.FindOrCreateChatForExternalID: No chat found for externalID %s. Creating new chat for chatbot %s, org %s.\n", externalChatID, chatbotID, orgID)
+
+	if initialMessage.Timestamp.IsZero() {
+		initialMessage.Timestamp = time.Now().UTC()
+	}
+
+	// Convert models.Message to models.ChatMessage for ChatData
+	initialChatMessage := models.ChatMessage{
+		Role:      initialMessage.Role,
+		Content:   initialMessage.Content,
+		Timestamp: initialMessage.Timestamp.Unix(), // models.ChatMessage uses Unix timestamp
+		SentBy:    initialMessage.Role,             // Or derive SentBy appropriately
+		Hide:      0,                               // Default
+		// Metadata would need conversion if models.ChatMessage supports it
+	}
+	messagesForChatData := []models.ChatMessage{initialChatMessage}
+	chatDataJSON, marshalErr := json.Marshal(messagesForChatData)
+	if marshalErr != nil {
+		return nil, fmt.Errorf("failed to marshal initial message for new chat: %w", marshalErr)
+	}
+
+	// Use the provided configuration or default to empty JSON object
+	configJSON := configuration
+	if len(configJSON) == 0 {
+		configJSON = []byte("{}")
+	}
+
+	newChat := &models.Chat{
+		ID:             uuid.New(),
+		OrganizationID: orgID,
+		ChatbotID:      chatbotID,
+		ExternalChatID: externalChatID, // Corrected: assign string directly
+		ChatData:       chatDataJSON,   // Use marshalled ChatMessage
+		Configuration:  configJSON,     // Use the provided configuration
+		CreatedAt:      time.Now().UTC(),
+		UpdatedAt:      time.Now().UTC(),
+		Status:         "ACTIVE", // Set a default status
+		// InterfaceID: uuid.Nil, // Or determine actual InterfaceID if possible
+	}
+
+	// Construct CreateChatParams for the store call
+	params := store.CreateChatParams{
+		ID:             newChat.ID,
+		OrganizationID: newChat.OrganizationID,
+		ChatbotID:      newChat.ChatbotID,
+		InterfaceID:    newChat.InterfaceID, // Will be uuid.Nil if not set on newChat
+		ExternalChatID: newChat.ExternalChatID,
+		ChatData:       newChat.ChatData,
+		Configuration:  newChat.Configuration,
+	}
+
+	createdChat, createErr := s.store.CreateChat(ctx, params)
+	if createErr != nil {
+		return nil, fmt.Errorf("failed to create new chat with externalID %s in store: %w", externalChatID, createErr)
+	}
+
+	fmt.Printf("DEBUG - ChatService.FindOrCreateChatForExternalID: Created new chat ID %s for externalID %s.\n", createdChat.ID, externalChatID)
+	return createdChat, nil // s.store.CreateChat now returns *models.Chat, so this is fine.
 }

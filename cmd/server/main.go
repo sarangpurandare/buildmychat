@@ -81,8 +81,8 @@ func main() {
 	log.Println("InterfaceService initialized.")
 	chatbotService := services.NewChatbotService(pgStore)
 	log.Println("ChatbotService initialized.")
-	chatService := services.NewChatService(pgStore, chatbotService)
-	log.Println("ChatService initialized.")
+	chatService := services.NewChatService(pgStore, chatbotService, credentialService)
+	log.Println("ChatService initialized with credential service.")
 	// ... Initialize other services here as they are created ...
 
 	// --- Initialize Handlers ---
@@ -98,17 +98,22 @@ func main() {
 	log.Println("ChatbotHandler initialized.")
 	chatHandler := handlers.NewChatHandlers(chatService)
 	log.Println("ChatHandler initialized.")
+
+	// Initialize SlackWebhookHandler
+	slackWebhookHandler := handlers.NewSlackWebhookHandlers(chatService)
+	log.Println("SlackWebhookHandler initialized.")
 	// ... Initialize other handlers here ...
 
 	// 4. Setup Router & Inject Dependencies
 	routerDeps := api.RouterDependencies{
-		AuthHandler:        authHandler,
-		CredentialsHandler: credentialHandler,
-		KBHandler:          kbHandler,        // Add KB handler
-		InterfaceHandler:   interfaceHandler, // Add Interface handler
-		ChatbotHandler:     chatbotHandler,   // Add Chatbot handler
-		ChatHandler:        chatHandler,      // Add Chat handler
-		Config:             cfg,
+		AuthHandler:         authHandler,
+		CredentialsHandler:  credentialHandler,
+		KBHandler:           kbHandler,           // Add KB handler
+		InterfaceHandler:    interfaceHandler,    // Add Interface handler
+		ChatbotHandler:      chatbotHandler,      // Add Chatbot handler
+		ChatHandler:         chatHandler,         // Add Chat handler
+		SlackWebhookHandler: slackWebhookHandler, // Added SlackWebhookHandler
+		Config:              cfg,
 	}
 	router := api.NewRouter(routerDeps) // Use the NewRouter function from internal/api
 	log.Println("HTTP router configured.")

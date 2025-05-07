@@ -1,5 +1,15 @@
 package integrations
 
+import (
+	"encoding/json"
+	"time"
+
+	"github.com/google/uuid"
+)
+
+// ServiceType represents a supported service integration type
+type ServiceType string
+
 // Defines the expected configuration structure for a Notion Knowledge Base.
 type NotionKBConfig struct {
 	NotionObjectIDs []string `json:"notion_object_ids"` // List of Notion Page or Database IDs to index.
@@ -35,3 +45,15 @@ type TestConnectionResult struct {
 
 // Helper type for decrypted credentials map
 type DecryptedCredentials map[string]string
+
+// DecryptedCredential represents a credential with its decrypted data
+type DecryptedCredential struct {
+	ID                   uuid.UUID
+	OrganizationID       uuid.UUID
+	ServiceType          ServiceType
+	CredentialName       string
+	Status               string
+	DecryptedCredentials json.RawMessage
+	CreatedAt            time.Time
+	UpdatedAt            time.Time
+}

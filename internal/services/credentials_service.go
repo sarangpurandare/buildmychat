@@ -36,6 +36,7 @@ type CredentialsService interface {
 	ListCredentials(ctx context.Context, orgID uuid.UUID, serviceType *string) ([]api_models.CredentialResponse, error)
 	DeleteCredential(ctx context.Context, id uuid.UUID, orgID uuid.UUID) error
 	TestCredential(ctx context.Context, id uuid.UUID, orgID uuid.UUID) (*api_models.TestCredentialResponse, error)
+	GetDecryptedCredential(ctx context.Context, id uuid.UUID, orgID uuid.UUID) (*integration_models.DecryptedCredential, error)
 }
 
 type credentialsService struct {
@@ -353,4 +354,48 @@ func (s *credentialsService) decrypt(ciphertext []byte) ([]byte, error) {
 	}
 	nonce, encryptedMessage := ciphertext[:nonceSize], ciphertext[nonceSize:]
 	return s.aead.Open(nil, nonce, encryptedMessage, nil)
+}
+
+// GetDecryptedCredential retrieves and decrypts a credential
+func (s *credentialsService) GetDecryptedCredential(ctx context.Context, id uuid.UUID, orgID uuid.UUID) (*integration_models.DecryptedCredential, error) {
+	// Get the credential from the database
+	dbCred, err := s.store.GetIntegrationCredentialByID(ctx, id, orgID)
+	if err != nil {
+		if errors.Is(err, store.ErrNotFound) {
+			return nil, ErrCredentialNotFound
+		}
+		return nil, fmt.Errorf("failed to retrieve credential: %w", err)
+	}
+
+	// Parse the encrypted wrapper
+	var encryptedWrapper struct {
+		Encrypted string `json:"encrypted"`
+	}
+	if err := json.Unmarshal(dbCred.EncryptedCredentials, &encryptedWrapper); err != nil {
+		return nil, fmt.Errorf("failed to parse encrypted credentials: %w", err)
+	}
+
+	// Decrypt the credentials
+	decryptedCredsMap, err := s.decryptCredentials(encryptedWrapper.Encrypted)
+	if err != nil {
+		return nil, fmt.Errorf("failed to decrypt credentials: %w", err)
+	}
+
+	// Marshal the credentials back to JSON
+	credentialsJSON, err := json.Marshal(decryptedCredsMap)
+	if err != nil {
+		return nil, fmt.Errorf("failed to marshal decrypted credentials: %w", err)
+	}
+
+	// Return the result
+	return &integration_models.DecryptedCredential{
+		ID:                   dbCred.ID,
+		OrganizationID:       dbCred.OrganizationID,
+		ServiceType:          integration_models.ServiceType(dbCred.ServiceType),
+		CredentialName:       dbCred.CredentialName,
+		Status:               dbCred.Status,
+		DecryptedCredentials: credentialsJSON,
+		CreatedAt:            dbCred.CreatedAt,
+		UpdatedAt:            dbCred.UpdatedAt,
+	}, nil
 }

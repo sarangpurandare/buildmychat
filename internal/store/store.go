@@ -106,7 +106,8 @@ type Store interface {
 
 	// Chatbot operations
 	CreateChatbot(ctx context.Context, arg CreateChatbotParams) (models.Chatbot, error)
-	GetChatbotByID(ctx context.Context, id uuid.UUID, organizationID uuid.UUID) (models.Chatbot, error)
+	GetChatbotByID(ctx context.Context, chatbotID, orgID uuid.UUID) (models.Chatbot, error)
+	GetChatbotByIDOnly(ctx context.Context, chatbotID uuid.UUID) (models.Chatbot, error)
 	ListChatbots(ctx context.Context, organizationID uuid.UUID) ([]models.Chatbot, error)
 	UpdateChatbot(ctx context.Context, arg UpdateChatbotParams) (models.Chatbot, error)
 	UpdateChatbotStatus(ctx context.Context, id uuid.UUID, organizationID uuid.UUID, isActive bool) error
@@ -128,6 +129,7 @@ type Store interface {
 	AddMessageToChat(ctx context.Context, chatID uuid.UUID, message models.ChatMessage, orgID uuid.UUID) error
 	UpdateChatStatus(ctx context.Context, chatID uuid.UUID, status string, orgID uuid.UUID) error
 	UpdateChatFeedback(ctx context.Context, chatID uuid.UUID, feedback int8, orgID uuid.UUID) error
+	UpdateChatConfiguration(ctx context.Context, chatID uuid.UUID, configuration []byte, orgID uuid.UUID) error
 }
 
 // Implementations below were moved to internal/store/postgres/store.go
@@ -161,4 +163,5 @@ type CreateChatParams struct {
 	InterfaceID    uuid.UUID
 	ExternalChatID string // Can be auto-generated if empty
 	ChatData       []byte // JSON-marshaled chat messages
+	Configuration  []byte // JSON configuration data
 }
