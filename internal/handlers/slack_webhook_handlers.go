@@ -4,10 +4,12 @@ import (
 	"buildmychat-backend/internal/models"
 	"buildmychat-backend/internal/services"
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
+	"net/http/httptest"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -35,7 +37,7 @@ func (h *SlackWebhookHandlers) HandleSlackEvent(w http.ResponseWriter, r *http.R
 	chatbotIDStr := chi.URLParam(r, "chatbotID") // Ensure router uses "chatbotID"
 	chatbotID, err := uuid.Parse(chatbotIDStr)
 	if err != nil {
-		respondWithError(w, http.StatusBadRequest, "Invalid chatbot ID in URL")
+		RespondWithError(w, http.StatusBadRequest, "Invalid chatbot ID in URL")
 		return
 	}
 	fmt.Printf("DEBUG - HandleSlackEvent - ChatbotID from URL: %s\n", chatbotID)
@@ -43,7 +45,7 @@ func (h *SlackWebhookHandlers) HandleSlackEvent(w http.ResponseWriter, r *http.R
 	// 2. Read the request body once
 	bodyBytes, err := io.ReadAll(r.Body)
 	if err != nil {
-		respondWithError(w, http.StatusInternalServerError, "Failed to read request body")
+		RespondWithError(w, http.StatusInternalServerError, "Failed to read request body")
 		return
 	}
 	defer r.Body.Close()
@@ -56,7 +58,7 @@ func (h *SlackWebhookHandlers) HandleSlackEvent(w http.ResponseWriter, r *http.R
 		Type string `json:"type"`
 	}
 	if err := json.Unmarshal(bodyBytes, &typeFinder); err != nil {
-		respondWithError(w, http.StatusBadRequest, "Could not determine payload type: "+err.Error())
+		RespondWithError(w, http.StatusBadRequest, "Could not determine payload type: "+err.Error())
 		return
 	}
 
@@ -66,7 +68,7 @@ func (h *SlackWebhookHandlers) HandleSlackEvent(w http.ResponseWriter, r *http.R
 	if typeFinder.Type == "url_verification" {
 		var challengeReq models.SlackChallengeRequest
 		if err := json.Unmarshal(bodyBytes, &challengeReq); err != nil {
-			respondWithError(w, http.StatusBadRequest, "Invalid Slack challenge request: "+err.Error())
+			RespondWithError(w, http.StatusBadRequest, "Invalid Slack challenge request: "+err.Error())
 			return
 		}
 		fmt.Printf("DEBUG - HandleSlackEvent - Responding to Slack URL verification challenge: %s\n", challengeReq.Challenge)
@@ -79,7 +81,7 @@ func (h *SlackWebhookHandlers) HandleSlackEvent(w http.ResponseWriter, r *http.R
 	if typeFinder.Type == "event_callback" {
 		var payload models.SlackEventPayload
 		if err := json.Unmarshal(bodyBytes, &payload); err != nil {
-			respondWithError(w, http.StatusBadRequest, "Invalid Slack event payload: "+err.Error())
+			RespondWithError(w, http.StatusBadRequest, "Invalid Slack event payload: "+err.Error())
 			return
 		}
 
@@ -101,7 +103,7 @@ func (h *SlackWebhookHandlers) HandleSlackEvent(w http.ResponseWriter, r *http.R
 		if teamID == "" || channelID == "" || userID == "" {
 			errMsg := fmt.Sprintf("Missing crucial IDs from event_callback: team_id: '%s', channel_id: '%s', user_id: '%s'", teamID, channelID, userID)
 			fmt.Printf("DEBUG - HandleSlackEvent - Error: %s\n", errMsg)
-			respondWithError(w, http.StatusBadRequest, "Missing team_id, channel_id, or user_id in event_callback payload")
+			RespondWithError(w, http.StatusBadRequest, "Missing team_id, channel_id, or user_id in event_callback payload")
 			return
 		}
 
@@ -136,7 +138,7 @@ func (h *SlackWebhookHandlers) HandleSlackEvent(w http.ResponseWriter, r *http.R
 			// However, most services are org-scoped.
 			// This implies chatService needs a way to get/validate chatbot without orgID from context.
 			// Or, the chatbot's orgID is retrieved and used.
-			respondWithError(w, http.StatusInternalServerError, "Could not determine organization for chatbot.")
+			RespondWithError(w, http.StatusInternalServerError, "Could not determine organization for chatbot.")
 			return
 		}
 
@@ -163,7 +165,7 @@ func (h *SlackWebhookHandlers) HandleSlackEvent(w http.ResponseWriter, r *http.R
 		chat, err := h.chatService.FindOrCreateChatForExternalID(r.Context(), orgIDForChatbot, chatbotID, externalChatID, initialUserMessage, configJSON)
 		if err != nil {
 			fmt.Printf("DEBUG - HandleSlackEvent - Error finding/creating chat: %v\n", err)
-			respondWithError(w, http.StatusInternalServerError, "Failed to process chat session: "+err.Error())
+			RespondWithError(w, http.StatusInternalServerError, "Failed to process chat session: "+err.Error())
 			return
 		}
 		fmt.Printf("DEBUG - HandleSlackEvent - Found/Created chat ID: %s\n", chat.ID)
@@ -181,15 +183,44 @@ func (h *SlackWebhookHandlers) HandleSlackEvent(w http.ResponseWriter, r *http.R
 		aiResponseContent := h.processAIDummyReply(chatbotID, chat.ID, text)
 		fmt.Printf("DEBUG - HandleSlackEvent - Dummy AI Response: %s\n", aiResponseContent)
 
-		// 8. Add AI's message to our chat history and let ChatService handle sending to interface
-		_, err = h.chatService.AddAssistantMessageToChat(r.Context(), orgIDForChatbot, chat.ID, aiResponseContent, nil)
-		if err != nil {
-			fmt.Printf("DEBUG - HandleSlackEvent - Error adding assistant message to chat: %v\n", err)
-			// Don't necessarily fail the whole request if logging assistant message fails
+		// 8. Add AI's message to our chat history and send to interface
+		// Create the request with SendToInterface set to true
+		assistantReq := models.AddMessageAsAssistantRequest{
+			Message:         aiResponseContent,
+			SendToInterface: func() *bool { b := true; return &b }(), // Set to true
 		}
 
-		// 9. No need to directly call sendSlackMessage anymore as AddAssistantMessageToChat handles it
-		// The chat service detects the interface type and sends the message to the appropriate integration
+		// Create a JSON request body
+		reqBody, err := json.Marshal(assistantReq)
+		if err != nil {
+			fmt.Printf("DEBUG - HandleSlackEvent - Error marshaling assistant request: %v\n", err)
+			RespondWithError(w, http.StatusInternalServerError, "Failed to process AI response")
+			return
+		}
+
+		// Create a request to the chat handler
+		req, err := http.NewRequestWithContext(r.Context(), "POST",
+			fmt.Sprintf("/v1/chats/%s/messages/assistant", chat.ID), bytes.NewBuffer(reqBody))
+		if err != nil {
+			fmt.Printf("DEBUG - HandleSlackEvent - Error creating request: %v\n", err)
+			RespondWithError(w, http.StatusInternalServerError, "Failed to process AI response")
+			return
+		}
+
+		// Set the organization ID in the request context
+		req = req.WithContext(context.WithValue(req.Context(), "organization_id", orgIDForChatbot))
+
+		// Call the chat handler directly
+		chatHandler := NewChatHandlers(h.chatService)
+		recorder := httptest.NewRecorder()
+		chatHandler.HandleAddAssistantMessage(recorder, req)
+
+		// Check the response
+		if recorder.Code != http.StatusOK {
+			fmt.Printf("DEBUG - HandleSlackEvent - Error from chat handler: %d - %s\n",
+				recorder.Code, recorder.Body.String())
+			// Continue anyway to acknowledge the webhook
+		}
 
 		// Acknowledge the event to Slack.
 		// This should be done quickly, ideally before long-running AI processing.
@@ -203,7 +234,7 @@ func (h *SlackWebhookHandlers) HandleSlackEvent(w http.ResponseWriter, r *http.R
 
 	// Fallback for unhandled types
 	fmt.Printf("DEBUG - HandleSlackEvent - Unhandled payload type: %s\n", typeFinder.Type)
-	respondWithError(w, http.StatusBadRequest, "Unhandled payload type: "+typeFinder.Type)
+	RespondWithError(w, http.StatusBadRequest, "Unhandled payload type: "+typeFinder.Type)
 }
 
 // processAIDummyReply is a placeholder for actual AI processing.
@@ -211,20 +242,3 @@ func (h *SlackWebhookHandlers) processAIDummyReply(chatbotID uuid.UUID, chatID u
 	fmt.Printf("INFO - processAIDummyReply - Args: chatbotID=%s, chatID=%s, userMessage='%s'\n", chatbotID, chatID, userMessage)
 	return fmt.Sprintf("Acknowledged your message: '%s'. (Processed by chatbot %s for chat %s)", userMessage, chatbotID, chatID)
 }
-
-// No longer need sendSlackMessage or getSlackBotTokenForChatbot methods as this is now handled by ChatService
-
-// respondWithError and respondWithJSON would be utility functions in the handlers package.
-// Assuming they are defined elsewhere similar to how they are in chat_handlers.go:
-/*
-func respondWithError(w http.ResponseWriter, code int, message string) {
-	respondWithJSON(w, code, map[string]string{"error": message})
-}
-
-func respondWithJSON(w http.ResponseWriter, code int, payload interface{}) {
-	response, _ := json.Marshal(payload)
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(code)
-	w.Write(response)
-}
-*/

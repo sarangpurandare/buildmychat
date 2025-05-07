@@ -28,10 +28,10 @@ func NewChatHandlers(chatService *services.ChatService) *ChatHandlers {
 // HandleCreateChat handles requests to create a new chat.
 func (h *ChatHandlers) HandleCreateChat(w http.ResponseWriter, r *http.Request) {
 	// Extract organization ID from context
-	orgID, err := getOrgIDFromContext(r.Context())
+	orgID, err := GetOrgIDFromContext(r.Context())
 	fmt.Println("DEBUG - HandleCreateChat - orgID from context:", orgID)
 	if err != nil {
-		respondWithError(w, http.StatusUnauthorized, "Unauthorized")
+		RespondWithError(w, http.StatusUnauthorized, "Unauthorized")
 		return
 	}
 
@@ -41,7 +41,7 @@ func (h *ChatHandlers) HandleCreateChat(w http.ResponseWriter, r *http.Request) 
 	// Parse request body
 	var req models.CreateChatRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		respondWithError(w, http.StatusBadRequest, "Invalid request body")
+		RespondWithError(w, http.StatusBadRequest, "Invalid request body")
 		return
 	}
 
@@ -56,20 +56,20 @@ func (h *ChatHandlers) HandleCreateChat(w http.ResponseWriter, r *http.Request) 
 	chat, err := h.chatService.CreateChat(r.Context(), orgID, req)
 	if err != nil {
 		fmt.Println("DEBUG - HandleCreateChat - Error:", err)
-		respondWithError(w, http.StatusInternalServerError, "Failed to create chat: "+err.Error())
+		RespondWithError(w, http.StatusInternalServerError, "Failed to create chat: "+err.Error())
 		return
 	}
 
 	// Respond with created chat
-	respondWithJSON(w, http.StatusCreated, chat)
+	RespondWithJSON(w, http.StatusCreated, chat)
 }
 
 // HandleGetChatByID handles requests to get a chat by ID.
 func (h *ChatHandlers) HandleGetChatByID(w http.ResponseWriter, r *http.Request) {
 	// Extract organization ID from context
-	orgID, err := getOrgIDFromContext(r.Context())
+	orgID, err := GetOrgIDFromContext(r.Context())
 	if err != nil {
-		respondWithError(w, http.StatusUnauthorized, "Unauthorized")
+		RespondWithError(w, http.StatusUnauthorized, "Unauthorized")
 		return
 	}
 
@@ -77,7 +77,7 @@ func (h *ChatHandlers) HandleGetChatByID(w http.ResponseWriter, r *http.Request)
 	chatIDStr := chi.URLParam(r, "chatID")
 	chatID, err := uuid.Parse(chatIDStr)
 	if err != nil {
-		respondWithError(w, http.StatusBadRequest, "Invalid chat ID")
+		RespondWithError(w, http.StatusBadRequest, "Invalid chat ID")
 		return
 	}
 
@@ -85,23 +85,23 @@ func (h *ChatHandlers) HandleGetChatByID(w http.ResponseWriter, r *http.Request)
 	chat, err := h.chatService.GetChatByID(r.Context(), orgID, chatID, true)
 	if err != nil {
 		if errors.Is(err, errors.New("record not found")) {
-			respondWithError(w, http.StatusNotFound, "Chat not found")
+			RespondWithError(w, http.StatusNotFound, "Chat not found")
 			return
 		}
-		respondWithError(w, http.StatusInternalServerError, "Failed to get chat: "+err.Error())
+		RespondWithError(w, http.StatusInternalServerError, "Failed to get chat: "+err.Error())
 		return
 	}
 
 	// Respond with chat
-	respondWithJSON(w, http.StatusOK, chat)
+	RespondWithJSON(w, http.StatusOK, chat)
 }
 
 // HandleAddUserMessage handles requests to add a user message to a chat.
 func (h *ChatHandlers) HandleAddUserMessage(w http.ResponseWriter, r *http.Request) {
 	// Extract organization ID from context
-	orgID, err := getOrgIDFromContext(r.Context())
+	orgID, err := GetOrgIDFromContext(r.Context())
 	if err != nil {
-		respondWithError(w, http.StatusUnauthorized, "Unauthorized")
+		RespondWithError(w, http.StatusUnauthorized, "Unauthorized")
 		return
 	}
 
@@ -109,14 +109,14 @@ func (h *ChatHandlers) HandleAddUserMessage(w http.ResponseWriter, r *http.Reque
 	chatIDStr := chi.URLParam(r, "chatID")
 	chatID, err := uuid.Parse(chatIDStr)
 	if err != nil {
-		respondWithError(w, http.StatusBadRequest, "Invalid chat ID")
+		RespondWithError(w, http.StatusBadRequest, "Invalid chat ID")
 		return
 	}
 
 	// Parse request body
 	var req models.AddMessageAsUserRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		respondWithError(w, http.StatusBadRequest, "Invalid request body")
+		RespondWithError(w, http.StatusBadRequest, "Invalid request body")
 		return
 	}
 
@@ -124,23 +124,23 @@ func (h *ChatHandlers) HandleAddUserMessage(w http.ResponseWriter, r *http.Reque
 	updatedChat, err := h.chatService.AddMessageToChat(r.Context(), orgID, chatID, req.Message)
 	if err != nil {
 		if errors.Is(err, errors.New("record not found")) {
-			respondWithError(w, http.StatusNotFound, "Chat not found")
+			RespondWithError(w, http.StatusNotFound, "Chat not found")
 			return
 		}
-		respondWithError(w, http.StatusInternalServerError, "Failed to add message: "+err.Error())
+		RespondWithError(w, http.StatusInternalServerError, "Failed to add message: "+err.Error())
 		return
 	}
 
 	// Respond with updated chat
-	respondWithJSON(w, http.StatusOK, updatedChat)
+	RespondWithJSON(w, http.StatusOK, updatedChat)
 }
 
 // HandleAddAssistantMessage handles requests to add an assistant message to a chat.
 func (h *ChatHandlers) HandleAddAssistantMessage(w http.ResponseWriter, r *http.Request) {
 	// Extract organization ID from context
-	orgID, err := getOrgIDFromContext(r.Context())
+	orgID, err := GetOrgIDFromContext(r.Context())
 	if err != nil {
-		respondWithError(w, http.StatusUnauthorized, "Unauthorized")
+		RespondWithError(w, http.StatusUnauthorized, "Unauthorized")
 		return
 	}
 
@@ -148,38 +148,63 @@ func (h *ChatHandlers) HandleAddAssistantMessage(w http.ResponseWriter, r *http.
 	chatIDStr := chi.URLParam(r, "chatID")
 	chatID, err := uuid.Parse(chatIDStr)
 	if err != nil {
-		respondWithError(w, http.StatusBadRequest, "Invalid chat ID")
+		RespondWithError(w, http.StatusBadRequest, "Invalid chat ID")
 		return
 	}
 
 	// Parse request body
 	var req models.AddMessageAsAssistantRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		respondWithError(w, http.StatusBadRequest, "Invalid request body")
+		RespondWithError(w, http.StatusBadRequest, "Invalid request body")
 		return
+	}
+
+	// Get the chat first to check if it exists and get its details
+	chat, err := h.chatService.GetChatByID(r.Context(), orgID, chatID, false)
+	if err != nil {
+		if errors.Is(err, errors.New("record not found")) {
+			RespondWithError(w, http.StatusNotFound, "Chat not found")
+			return
+		}
+		RespondWithError(w, http.StatusInternalServerError, "Failed to get chat: "+err.Error())
+		return
+	}
+
+	// Determine if we should send to interface
+	sendToInterface := false
+	if req.SendToInterface != nil {
+		sendToInterface = *req.SendToInterface
 	}
 
 	// Call service to add assistant message
 	updatedChat, err := h.chatService.AddAssistantMessageToChat(r.Context(), orgID, chatID, req.Message, req.Metadata)
 	if err != nil {
 		if errors.Is(err, errors.New("record not found")) {
-			respondWithError(w, http.StatusNotFound, "Chat not found")
+			RespondWithError(w, http.StatusNotFound, "Chat not found")
 			return
 		}
-		respondWithError(w, http.StatusInternalServerError, "Failed to add assistant message: "+err.Error())
+		RespondWithError(w, http.StatusInternalServerError, "Failed to add assistant message: "+err.Error())
 		return
 	}
 
+	// If sendToInterface is true and the chat has an associated interface, send the message
+	if sendToInterface && chat.InterfaceID != uuid.Nil {
+		if err := h.chatService.SendMessageToInterface(r.Context(), orgID, chatID, req.Message); err != nil {
+			// Log the error but don't fail the entire operation
+			fmt.Printf("WARNING - HandleAddAssistantMessage - Failed to send message to interface: %v\n", err)
+		}
+	}
+
 	// Respond with updated chat
-	respondWithJSON(w, http.StatusOK, updatedChat)
+	RespondWithJSON(w, http.StatusOK, updatedChat)
 }
 
 // HandleListChats handles requests to list chats for the organization or chatbot.
 func (h *ChatHandlers) HandleListChats(w http.ResponseWriter, r *http.Request) {
 	// Extract organization ID from context
-	orgID, err := getOrgIDFromContext(r.Context())
+	orgID, err := GetOrgIDFromContext(r.Context())
 	if err != nil {
-		respondWithError(w, http.StatusUnauthorized, "Unauthorized")
+		RespondWithError(w, http.StatusUnauthorized, "Unauthorized")
 		return
 	}
 
@@ -202,7 +227,7 @@ func (h *ChatHandlers) HandleListChats(w http.ResponseWriter, r *http.Request) {
 		// If chatbot ID is provided, list chats for that chatbot
 		chatbotID, err := uuid.Parse(chatbotIDStr)
 		if err != nil {
-			respondWithError(w, http.StatusBadRequest, "Invalid chatbot ID")
+			RespondWithError(w, http.StatusBadRequest, "Invalid chatbot ID")
 			return
 		}
 		chats, err = h.chatService.ListChatsByChatbot(r.Context(), orgID, chatbotID, limit, offset, true)
@@ -212,12 +237,12 @@ func (h *ChatHandlers) HandleListChats(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err != nil {
-		respondWithError(w, http.StatusInternalServerError, "Failed to list chats: "+err.Error())
+		RespondWithError(w, http.StatusInternalServerError, "Failed to list chats: "+err.Error())
 		return
 	}
 
 	// Respond with chats
-	respondWithJSON(w, http.StatusOK, chats)
+	RespondWithJSON(w, http.StatusOK, chats)
 }
 
 func (h *ChatHandlers) debugListAllChatbotsForOrg(ctx context.Context, orgID uuid.UUID) {

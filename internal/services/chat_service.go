@@ -354,10 +354,10 @@ func (s *ChatService) AddMessageToChat(ctx context.Context, orgID, chatID uuid.U
 }
 
 // AddAssistantMessageToChat adds an assistant message to a chat and updates its status to ACTIVE.
-// If the chat has an associated interface, it will also send the message to that interface.
+// If the chat has an associated interface and sendToInterface is true, it will also send the message to that interface.
 func (s *ChatService) AddAssistantMessageToChat(ctx context.Context, orgID, chatID uuid.UUID, message string, metadata *json.RawMessage) (*models.ChatResponse, error) {
 	// First get the chat to ensure it exists and belongs to the organization
-	chat, err := s.store.GetChatByID(ctx, chatID, orgID)
+	_, err := s.store.GetChatByID(ctx, chatID, orgID)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get chat: %w", err)
 	}
@@ -380,14 +380,6 @@ func (s *ChatService) AddAssistantMessageToChat(ctx context.Context, orgID, chat
 	// Update the chat status to ACTIVE (ready for next user input)
 	if err := s.store.UpdateChatStatus(ctx, chatID, "ACTIVE", orgID); err != nil {
 		return nil, fmt.Errorf("failed to update chat status: %w", err)
-	}
-
-	// Check if this chat has an associated interface - if so, send the message to that interface
-	if chat.InterfaceID != uuid.Nil {
-		if err := s.sendMessageToInterface(ctx, chat, message); err != nil {
-			// Log the error but don't fail the entire operation
-			fmt.Printf("WARNING - AddAssistantMessageToChat - Failed to send message to interface: %v\n", err)
-		}
 	}
 
 	// Get the updated chat to return
@@ -425,28 +417,6 @@ func (s *ChatService) sendMessageToInterface(ctx context.Context, chat *models.C
 
 // sendMessageToSlack sends a message to a Slack channel.
 func (s *ChatService) sendMessageToSlack(ctx context.Context, chat *models.Chat, iface *models.Interface, message string) error {
-	// 1. Get the Slack credentials
-	if iface.CredentialID == uuid.Nil {
-		return fmt.Errorf("slack interface has no associated credential")
-	}
-
-	// Get the decrypted credentials using CredentialService
-	credential, err := s.credentialService.GetDecryptedCredential(ctx, iface.CredentialID, chat.OrganizationID)
-	if err != nil {
-		return fmt.Errorf("failed to get Slack credentials: %w", err)
-	}
-
-	// Extract the bot token from the decrypted credentials
-	var creds map[string]string
-	if err := json.Unmarshal(credential.DecryptedCredentials, &creds); err != nil {
-		return fmt.Errorf("failed to parse Slack credentials: %w", err)
-	}
-
-	botToken, ok := creds["bot_token"]
-	if !ok || botToken == "" {
-		return fmt.Errorf("invalid or missing Slack bot token in credentials")
-	}
-
 	// Extract channel ID from external_chat_id
 	if chat.ExternalChatID == "" {
 		return fmt.Errorf("chat has no external chat ID for Slack")
@@ -471,11 +441,10 @@ func (s *ChatService) sendMessageToSlack(ctx context.Context, chat *models.Chat,
 		}
 	}
 
-	// Use the Slack integration to actually send the message
+	// Use the Slack integration to send the message using the interface configuration directly
 	fmt.Printf("INFO - ChatService.sendMessageToSlack - Sending message to Slack channel %s\n", channelID)
 
-	// Import the slack integration package in the imports section
-	return slack.SendMessageToChannel(ctx, botToken, channelID, message, threadTs)
+	return slack.SendMessageUsingInterfaceConfig(ctx, iface.Configuration, channelID, message, threadTs)
 }
 
 // UpdateChatFeedback updates the feedback for a chat.
@@ -620,4 +589,22 @@ func (s *ChatService) FindOrCreateChatForExternalID(
 
 	fmt.Printf("DEBUG - ChatService.FindOrCreateChatForExternalID: Created new chat ID %s for externalID %s.\n", createdChat.ID, externalChatID)
 	return createdChat, nil // s.store.CreateChat now returns *models.Chat, so this is fine.
+}
+
+// SendMessageToInterface sends a message to the interface associated with a chat.
+// This is a public method that can be called directly from handlers.
+func (s *ChatService) SendMessageToInterface(ctx context.Context, orgID, chatID uuid.UUID, message string) error {
+	// Get the chat to ensure it exists and belongs to the organization
+	chat, err := s.store.GetChatByID(ctx, chatID, orgID)
+	if err != nil {
+		return fmt.Errorf("failed to get chat: %w", err)
+	}
+
+	// Check if this chat has an associated interface
+	if chat.InterfaceID == uuid.Nil {
+		return fmt.Errorf("chat does not have an associated interface")
+	}
+
+	// Use the internal method to send the message
+	return s.sendMessageToInterface(ctx, chat, message)
 }

@@ -263,7 +263,8 @@ type AddMessageAsUserRequest struct {
 
 // AddMessageAsAssistantRequest defines the payload for adding an assistant message to a chat.
 type AddMessageAsAssistantRequest struct {
-	Message  string           `json:"message"`            // The assistant message content
-	Metadata *json.RawMessage `json:"metadata,omitempty"` // Optional metadata for the message
+	Message         string           `json:"message"`                     // The assistant message content
+	Metadata        *json.RawMessage `json:"metadata,omitempty"`          // Optional metadata for the message
+	SendToInterface *bool            `json:"send_to_interface,omitempty"` // Optional flag to send message to interface
 	// Media    []MediaAttachment `json:"media,omitempty"`    // Reverted: Optional media attachments
 }
